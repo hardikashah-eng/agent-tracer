@@ -101,3 +101,31 @@ python -m examples.external_agent
 The standalone Python client is in `backend/external_client.py`. Create an external session with `POST /api/external/sessions`, then send `{kind,name,payload}` to `POST /api/external/sessions/{id}/events` using `X-Tracer-Token`. WebSocket subscribers receive events live. External ingestion is **telemetry-only**; it cannot pause or step the remote harness. Only cooperative in-process harnesses can honor debugger controls.
 
 **Security:** The ingest token protects only the two external write endpoints. The other API and WebSocket endpoints remain unauthenticated, so this is a local trusted-development prototype; do not expose it on a shared network or embed it on untrusted origins. Redact sensitive payloads before sending. CORS and iframe framing need production hardening.
+
+## v0.6 — Potential root-cause diagnosis
+
+Click **Diagnose current run** in the debugger or sidecar, or call
+`GET /api/sessions/{id}/diagnosis`. This read-only endpoint works for running,
+paused, completed, and failed sessions. Reports describe the captured trace
+through `analyzed_through_seq`; rerun diagnosis when new events arrive.
+
+The local rule engine ranks explicit errors/timeouts first, repeated identical
+tool requests and removed system/developer messages next, and unattributed
+tool results last. Each hypothesis includes observations, event references,
+next checks, and missing evidence. Evidence buttons scroll to captured events.
+No signals means insufficient evidence, not a healthy-run certification.
+
+Instrument `tool.before` with `payload.arguments`, explicit failures with
+`payload.error`, `payload.exception`, `payload.success=false`, or
+`payload.status=failed/error`; emit context snapshots with stable message IDs
+and `source` attribution. Include node ID, binary/BSP version, request IDs,
+and timeout settings in error payloads for manual infrastructure investigation.
+These metadata do not automatically prove a node or binary caused a failure.
+
+This release uses deterministic local rules only: no LLM, external log queries,
+automatic remediation, or real model replay. Confidence is labeled heuristic,
+never a calibrated probability. Repeated calls can be intentional; removed
+instructions can be replaced; missing attribution does not prove an omitted
+result. The existing local-only API security limitations still apply.
+
+Validation: `python -m pytest -q`; `cd frontend && npm ci && npm run build`.

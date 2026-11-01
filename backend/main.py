@@ -9,11 +9,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .tracer import tracer
+from .diagnosis import diagnose
+import copy
 from .agent import example_agent
 from .efficiency import analyze
 from .causal import provenance, experiment
 
-app = FastAPI(title='Agent Tracer', version='0.5.0')
+app = FastAPI(title='Agent Tracer', version='0.6.0')
 app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:5173', 'http://127.0.0.1:5173'], allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
 
 class StartRequest(BaseModel):
@@ -79,6 +81,11 @@ async def ingest_event(sid: str, req: IngestRequest, x_tracer_token: str | None 
 @app.get('/api/sessions')
 def list_sessions():
     return [{'id': s.id, 'status': s.status, 'events': len(s.events)} for s in tracer.sessions.values()]
+
+@app.get('/api/sessions/{sid}/diagnosis')
+async def diagnosis(sid: str):
+    s = get_session(sid)
+    return diagnose(copy.deepcopy(s.events), s.status, s.paused)
 
 @app.get('/api/sessions/{sid}/efficiency')
 def efficiency(sid: str):

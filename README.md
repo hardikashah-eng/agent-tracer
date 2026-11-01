@@ -5,6 +5,12 @@ Tooling to debug on going agent sessions
 
 A working FastAPI + WebSocket + React debugger. **Python 3.10+ and Node 20+**.
 
+## Installation and usage guide
+
+See [Getting started](docs/GETTING_STARTED.md) for setup on macOS/Linux/Windows,
+a debugging walkthrough, Python integration, sidecar embedding, potential RCA,
+and troubleshooting.
+
 ## Start
 
 Terminal 1 (from repository root):
@@ -43,7 +49,7 @@ result = await call_tool(tool_name, arguments)
 tracer.emit(s, 'tool.after', tool_name, {'result': result})
 ```
 
-This sample assumes the harness runs in the **same Python process** as the API. For a remote harness, implement an authenticated ingestion/control transport rather than sharing `tracer` in memory. See `backend/agent.py` for a runnable example. Existing session creation endpoint starts the sample agent; adding a generic registration/ingestion endpoint is future work.
+This sample assumes the harness runs in the **same Python process and event loop** as the API. For a separate process, use the token-protected external telemetry API described below; external pause/step control is not implemented. See `backend/agent.py` for a runnable example and [the integration guide](docs/GETTING_STARTED.md#6-connect-a-separate-python-agent) for setup.
 
 ## Debug semantics
 

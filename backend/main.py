@@ -7,18 +7,26 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from .tracer import tracer
 from .diagnosis import diagnose
 import copy
 from .agent import example_agent
 from .efficiency import analyze
 from .causal import provenance, experiment
+from .comparison import compare
+from .replay import export_fixture, evaluate, intervention
+from .infrastructure import correlate, experiment_plan
+from .trials import summarize
+from fastapi.responses import JSONResponse
 
-app = FastAPI(title='Agent Tracer', version='0.6.0')
+app = FastAPI(title='Agent Tracer', version='0.9.0')
 app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:5173', 'http://127.0.0.1:5173'], allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
 
-class StartRequest(BaseModel):
+class SessionMetadata(BaseModel):
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+class StartRequest(SessionMetadata):
     task: str = 'Implement a simple function and run tests'
     start_paused: bool = False
 
@@ -38,6 +46,8 @@ class IngestRequest(BaseModel):
     kind: str
     name: str
     payload: dict = Field(default_factory=dict)
+    call_id: str | None = None
+    parent_call_id: str | None = None
 
 class Command(BaseModel):
     action: str
@@ -48,19 +58,19 @@ def get_session(sid):
     return s
 
 def snapshot(s):
-    return {'id': s.id, 'status': s.status, 'paused': s.paused, 'events': s.events, 'breakpoints': s.breakpoints, 'state': s.state}
+    return {'id': s.id, 'status': s.status, 'paused': s.paused, 'events': s.events, 'breakpoints': s.breakpoints, 'state': s.state, 'metadata': s.metadata, 'restored': s.restored}
 
 @app.post('/api/sessions')
 async def create(req: StartRequest):
-    s = tracer.create()
+    s = tracer.create(req.metadata)
     if req.start_paused: s.breakpoints.append({'kind': 'agent.start', 'name': '*', 'enabled': True, '_temporary': True})
     s.task = asyncio.create_task(example_agent(s, req.task))
     return snapshot(s)
 
 @app.post('/api/external/sessions')
-async def create_external(x_tracer_token: str | None = Header(default=None)):
+async def create_external(req: SessionMetadata | None = None, x_tracer_token: str | None = Header(default=None)):
     require_ingest_token(x_tracer_token)
-    s = tracer.create()
+    s = tracer.create(req.metadata if req else {})
     s.status = 'running'
     tracer.emit(s, 'agent.connected', 'external-harness', {'mode': 'telemetry-only'})
     return {'id': s.id, 'mode': 'telemetry-only'}
@@ -74,13 +84,17 @@ def require_ingest_token(token):
 async def ingest_event(sid: str, req: IngestRequest, x_tracer_token: str | None = Header(default=None)):
     require_ingest_token(x_tracer_token)
     s = get_session(sid)
+    if s.restored: raise HTTPException(409, 'Create a new external session after restart')
     if len(str(req.payload)) > 100000:
         raise HTTPException(413, 'Event payload too large')
-    return tracer.emit(s, req.kind, req.name, req.payload)
+    payload = dict(req.payload)
+    if req.call_id: payload['call_id'] = req.call_id
+    if req.parent_call_id: payload['parent_call_id'] = req.parent_call_id
+    return tracer.emit(s, req.kind, req.name, payload)
 
 @app.get('/api/sessions')
 def list_sessions():
-    return [{'id': s.id, 'status': s.status, 'events': len(s.events)} for s in tracer.sessions.values()]
+    return [{'id': s.id, 'status': s.status, 'events': len(s.events), 'metadata': s.metadata, 'restored': s.restored} for s in tracer.sessions.values()]
 
 @app.get('/api/sessions/{sid}/diagnosis')
 async def diagnosis(sid: str):
@@ -97,7 +111,7 @@ def context_provenance(sid: str):
     return provenance(get_session(sid).events)
 
 @app.post('/api/sessions/{sid}/experiments')
-def run_experiment(sid: str, req: AblationRequest):
+async def run_experiment(sid: str, req: AblationRequest):
     s = get_session(sid)
     selected = next((e for e in s.events if e['kind'] == 'context.snapshot' and e['seq'] == req.snapshot_seq), None)
     if not selected: raise HTTPException(404, 'Context snapshot not found')
@@ -110,24 +124,26 @@ def run_experiment(sid: str, req: AblationRequest):
 def session(sid: str): return snapshot(get_session(sid))
 
 @app.post('/api/sessions/{sid}/breakpoints')
-def add_breakpoint(sid: str, bp: Breakpoint):
-    s = get_session(sid); s.breakpoints.append(bp.model_dump()); return snapshot(s)
+async def add_breakpoint(sid: str, bp: Breakpoint):
+    s = get_session(sid); s.breakpoints.append(bp.model_dump()); tracer.persist(s); return snapshot(s)
 
 @app.delete('/api/sessions/{sid}/breakpoints/{index}')
-def remove_breakpoint(sid: str, index: int):
+async def remove_breakpoint(sid: str, index: int):
     s = get_session(sid)
     if index < 0 or index >= len(s.breakpoints): raise HTTPException(404, 'Breakpoint not found')
-    s.breakpoints.pop(index); return snapshot(s)
+    s.breakpoints.pop(index); tracer.persist(s); return snapshot(s)
 
 @app.post('/api/sessions/{sid}/command')
-def command(sid: str, cmd: Command):
+async def command(sid: str, cmd: Command):
     s = get_session(sid)
+    if s.restored: raise HTTPException(409, 'Restored traces are read-only; start a new run')
     if cmd.action == 'cancel':
         if s.task and not s.task.done(): s.task.cancel()
     elif cmd.action in ('pause', 'resume', 'step'):
-        if s.status in ('completed', 'cancelled', 'failed'): raise HTTPException(409, 'Session already finished')
+        if s.status in ('completed', 'cancelled', 'failed', 'interrupted'): raise HTTPException(409, 'Session already finished')
         tracer.command(s, cmd.action)
     else: raise HTTPException(400, 'Unknown action')
+    tracer.persist(s)
     return snapshot(s)
 
 @app.websocket('/ws/sessions/{sid}')
@@ -144,6 +160,76 @@ async def ws(websocket: WebSocket, sid: str):
             await websocket.send_json({'type': 'event', 'data': ev, 'status': s.status, 'paused': s.paused})
     except (WebSocketDisconnect, RuntimeError): pass
     finally: s.subscribers.discard(q)
+
+class Assertion(BaseModel):
+    call_id: str
+    path: list[str] = Field(default_factory=list, max_length=20)
+    equals: object
+
+class ReplayRequest(BaseModel):
+    assertions: list[Assertion] = Field(min_length=1, max_length=100)
+
+class InterventionRequest(ReplayRequest):
+    call_id: str
+    replacement: dict
+
+class Pair(BaseModel):
+    trial_id: str
+    baseline: StrictBool
+    variant: StrictBool
+
+class TrialRequest(BaseModel):
+    baseline_id: str
+    candidate_id: str
+    pairs: list[Pair] = Field(min_length=2, max_length=1000)
+
+@app.get('/api/compare')
+async def compare_runs(baseline: str, candidate: str):
+    return compare(get_session(baseline), get_session(candidate))
+
+@app.get('/api/infrastructure')
+async def infrastructure():
+    return correlate(list(tracer.sessions.values()))
+
+@app.get('/api/experiment-plan')
+async def plan(baseline: str, candidate: str):
+    return experiment_plan(get_session(baseline), get_session(candidate))
+
+@app.post('/api/trials')
+async def trials(req: TrialRequest):
+    a, b = get_session(req.baseline_id), get_session(req.candidate_id)
+    report = summarize([p.model_dump() for p in req.pairs])
+    s = tracer.create({'analysis': 'paired-trials'})
+    s.status = 'completed'
+    tracer.emit(s, 'analysis.completed', 'paired-trials', {'baseline_id': a.id, 'candidate_id': b.id,
+                'plan': experiment_plan(a, b), 'report': report, 'pairs': [p.model_dump() for p in req.pairs]})
+    return {'analysis_session_id': s.id, 'report': report}
+
+def fixture_for(sid, req):
+    try:
+        return export_fixture(get_session(sid), [a.model_dump() for a in req.assertions])
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+@app.post('/api/sessions/{sid}/regression')
+async def regression(sid: str, req: ReplayRequest):
+    return JSONResponse(fixture_for(sid, req), headers={'Content-Disposition': 'attachment; filename="regression.json"'})
+
+@app.post('/api/sessions/{sid}/replay')
+async def replay(sid: str, req: ReplayRequest):
+    return evaluate(fixture_for(sid, req))
+
+@app.post('/api/sessions/{sid}/intervention')
+async def intervene(sid: str, req: InterventionRequest):
+    fixture = fixture_for(sid, req)
+    try:
+        report = intervention(fixture, req.call_id, req.replacement)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    analysis = tracer.create({'analysis': 'recorded-intervention', 'source_session_id': sid})
+    analysis.status = 'completed'
+    tracer.emit(analysis, 'analysis.completed', 'recorded-intervention', {'report': report})
+    return {**report, 'analysis_session_id': analysis.id}
 
 DIST = Path(__file__).resolve().parent.parent / 'frontend' / 'dist'
 @app.get('/')

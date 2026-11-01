@@ -3,6 +3,9 @@ import copy
 import fnmatch
 import time
 import uuid
+import os
+from threading import RLock
+from .storage import SQLiteStore
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,20 +23,59 @@ class Session:
     subscribers: set = field(default_factory=set)
     task: asyncio.Task | None = None
     state: dict = field(default_factory=dict)
+    metadata: dict = field(default_factory=dict)
+    restored: bool = False
+    pending_calls: dict = field(default_factory=dict)
 
 
 class Tracer:
-    def __init__(self):
+    def __init__(self, store=None):
+        self.store = store
+        self.lock = RLock()
         self.sessions: dict[str, Session] = {}
+        if store:
+            for body in store.load():
+                s = Session(**body, restored=True)
+                if s.status not in ('completed', 'failed', 'cancelled'):
+                    s.status = 'interrupted'
+                self.sessions[s.id] = s
+                self.persist(s)
 
-    def create(self):
-        s = Session(id=uuid.uuid4().hex[:12]); self.sessions[s.id] = s
+    def persist(self, s):
+        if self.store:
+            self.store.save(s)
+
+    def create(self, metadata=None):
+        s = Session(id=uuid.uuid4().hex, metadata=copy.deepcopy(metadata or {})); self.persist(s); self.sessions[s.id] = s
         return s
 
     def emit(self, s: Session, kind: str, name: str, payload: dict | None = None):
-        s.seq += 1
-        event = {'seq': s.seq, 'ts': time.time(), 'kind': kind, 'name': name, 'payload': copy.deepcopy(payload or {})}
-        s.events.append(event)
+        with self.lock:
+            payload = copy.deepcopy(payload or {})
+            old_pending = copy.deepcopy(s.pending_calls)
+            call_id = payload.get('call_id')
+            if kind in ('tool.before', 'llm.before'):
+                call_id = call_id or uuid.uuid4().hex
+                s.pending_calls.setdefault((kind.split('.')[0], name), []).append(call_id)
+            elif kind in ('tool.after', 'tool.error', 'llm.after', 'llm.error'):
+                pending = s.pending_calls.get((kind.split('.')[0], name), [])
+                if call_id and call_id in pending:
+                    pending.remove(call_id)
+                elif not call_id and len(pending) == 1:
+                    call_id = pending.pop()
+            event = {'seq': s.seq + 1, 'ts': time.time(), 'kind': kind, 'name': name,
+                     'call_id': call_id, 'parent_call_id': payload.get('parent_call_id'), 'payload': payload}
+            if kind.endswith(('.error', '.failed')):
+                event['error'] = {'type': payload.get('error_type', 'unspecified'), 'message': str(payload.get('error', payload.get('exception', 'Failure reported'))), 'retryable': payload.get('retryable')}
+            old_status = s.status
+            if kind in ('agent.completed', 'agent.failed', 'agent.error', 'agent.cancelled'):
+                s.status = {'agent.error': 'failed'}.get(kind, kind.split('.')[1])
+            s.events.append(event); s.seq += 1
+            try:
+                self.persist(s)
+            except Exception:
+                s.events.pop(); s.seq -= 1; s.status = old_status; s.pending_calls = old_pending
+                raise
         for q in tuple(s.subscribers):
             try: q.put_nowait(event)
             except asyncio.QueueFull: s.subscribers.discard(q)
@@ -65,4 +107,4 @@ class Tracer:
             s.resume_event.set()
         else: raise ValueError('Unknown command')
 
-tracer = Tracer()
+tracer = Tracer(SQLiteStore(os.environ.get('AGENT_TRACER_DB', 'data/agent-tracer.sqlite3')))

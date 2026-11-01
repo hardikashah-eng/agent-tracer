@@ -1,0 +1,19 @@
+"""Context snapshots: capture the actual outbound model messages separately from state."""
+import copy
+import json
+
+def snapshot_context(tracer, session, label, messages, state=None, provenance=None):
+    """Call immediately before sending messages to a model; counts are estimates, not tokenizer output."""
+    parts = []
+    for i, msg in enumerate(messages):
+        content = msg.get('content', '')
+        serialized = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False, default=str)
+        role = msg.get('role', 'unknown')
+        category = msg.get('category') or ('tool' if role == 'tool' else 'system' if role in ('system', 'developer') else 'conversation')
+        parts.append({'id': msg.get('id', f'{role}-{i}'), 'role': role, 'category': category,
+                      'content': serialized, 'chars': len(serialized), 'estimated_tokens': max(1, (len(serialized)+3)//4),
+                      'source': msg.get('source', provenance)})
+    return tracer.emit(session, 'context.snapshot', label, {
+        'messages': parts, 'state': copy.deepcopy(state or {}),
+        'estimated_tokens': sum(p['estimated_tokens'] for p in parts),
+        'note': 'Token counts are approximate; actual provider tokenization may differ.'})

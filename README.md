@@ -11,6 +11,10 @@ See [Getting started](docs/GETTING_STARTED.md) for setup on macOS/Linux/Windows,
 a debugging walkthrough, Python integration, sidecar embedding, potential RCA,
 and troubleshooting.
 
+## Investigation workspace v0.9
+
+[Run comparison, durable traces, recorded replay, regression export, and infrastructure trials](docs/INVESTIGATION.md) are now available. See the guide for execution boundaries and examples.
+
 ## Start
 
 Terminal 1 (from repository root):
@@ -62,7 +66,7 @@ This sample assumes the harness runs in the **same Python process and event loop
 
 ## Limits and security
 
-Development prototype, not production-hardened: in-memory session storage, no authentication, no redaction, no trace retention policy, no distributed workers, and no deterministic model replay. The example agent deliberately simulates LLM/tool calls and reports synthetic token counts. Never expose the server publicly or send secrets in trace payloads. The `step` control is checkpoint-level stepping, not Python source-line stepping or stepping inside model inference. Sessions disappear on server restart.
+Development prototype, not production-hardened: SQLite-backed captured session storage, no authentication, no redaction, no trace retention policy, no distributed workers, and no deterministic model replay. The example agent deliberately simulates LLM/tool calls and reports synthetic token counts. Never expose the server publicly or send secrets in trace payloads. The `step` control is checkpoint-level stepping, not Python source-line stepping or stepping inside model inference. Captured sessions survive restart; unfinished runs become interrupted and cannot resume.
 
 ## Context Evolution Explorer
 
@@ -135,3 +139,4 @@ instructions can be replaced; missing attribution does not prove an omitted
 result. The existing local-only API security limitations still apply.
 
 Validation: `python -m pytest -q`; `cd frontend && npm ci && npm run build`.
+

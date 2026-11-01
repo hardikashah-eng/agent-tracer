@@ -1,8 +1,11 @@
 # Agent Tracer installation and usage guide
 
-Agent Tracer v0.6 is a local developer tool for inspecting instrumented agent runs.
+Agent Tracer v0.9 is a local developer tool for inspecting instrumented agent runs.
 It includes a FastAPI backend, React debugger, embeddable sidecar, Python telemetry
 client, and potential root-cause diagnosis.
+
+For run comparison, durable storage, replay, regression export, and infrastructure
+experiments, see [Investigation workspace](INVESTIGATION.md).
 
 ## 1. Requirements
 
@@ -182,8 +185,7 @@ handle telemetry exceptions in your application so they do not abort useful work
 In an async harness, consider `await asyncio.to_thread(client.emit, ...)` to avoid
 blocking its event loop.
 
-External session status currently remains `running`; emitting a completion event
-does not update that status. External controls are not supported.
+Emit `agent.completed` or `agent.failed` to update external session status. External controls are not supported.
 
 ## 7. Instrument a cooperative in-process harness
 
@@ -284,7 +286,7 @@ cd ..
 python -m pytest -q
 ```
 
-At publication, the suite has 11 tests. Building first enables the compiled
+Run the current backend test suite. Building first enables the compiled
 frontend route check; without a build that test is skipped. Dependency
 deprecation warnings may appear. Interactive browser behavior is not covered by
 this test suite.
@@ -299,14 +301,15 @@ this test suite.
 | External ingestion returns 401 | Set the same nonempty token in the backend and client; restart backend after changing its environment. |
 | Pause/step has no effect on an external agent | External integration is telemetry-only; use cooperative in-process checkpoints for controls. |
 | No diagnosis findings | Emit explicit failure fields, arguments, and context/provenance; absence of findings does not mean no failure occurred. |
-| Sessions disappeared | Storage is in memory; restarting the server clears sessions. |
+| Sessions disappeared | Check AGENT_TRACER_DB and working directory; traces persist, but unfinished runs become interrupted. |
 | Port already in use | Stop the existing process. If changing backend ports, update Vite proxy targets and client URLs. |
 
 ## Operating limits
 
 Keep the server bound to loopback. Only external ingestion writes require a token;
 read APIs, debugger controls, and WebSockets are unauthenticated. There is no
-automatic redaction, retention policy, durable storage, or multi-worker support.
+automatic redaction, retention policy, multi-worker support. SQLite stores captured traces, not resumable task stacks.
 Do not expose the server publicly or trace credentials/private payloads.
 Use one backend worker. Context token counts and demo ablation results are
 estimates/synthetic, not provider billing or proof of causal model influence.
+

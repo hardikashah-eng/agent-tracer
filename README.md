@@ -180,3 +180,15 @@ Prompt snapshots linked by call ID are preferred; legacy nearest-preceding snaps
 are labeled unverified. Context changes compare with the previous recorded snapshot,
 which may belong to another concurrent call. Character-based context contributions
 are labeled estimates and are separate from reported usage.
+
+
+### Interactive UI sample
+
+Try the [standalone flame-chart and insights sample](docs/samples/flame-insights.html).
+On GitHub, use **Download raw file**, then open the saved HTML in your browser.
+It works offline without installing dependencies or running the backend.
+
+Click operation bars, switch elapsed-time/token/cost views, and explore the five
+insight tabs. All data is synthetic. The live/recorded selector illustrates viewing
+modes and does not connect to a running agent. This is an illustrative sample, not
+a screenshot or a replacement for the full debugger.

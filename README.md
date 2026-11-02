@@ -140,3 +140,24 @@ result. The existing local-only API security limitations still apply.
 
 Validation: `python -m pytest -q`; `cd frontend && npm ci && npm run build`.
 
+
+
+
+### Execution flame chart
+
+Both the main debugger and sidecar include an interactive flame chart. Call bars use
+actual start/end timestamps; explicit `parent_call_id` links determine nesting, and
+overlapping calls get separate lanes. Click a bar to inspect inputs and outputs or
+select its start/end event in the existing inspector. Zoom and search help with long traces.
+Errors are marked; incomplete calls extend only to the last recorded event.
+
+The measure selector also supports reported tokens (`payload.tokens` or `payload.usage`)
+and USD cost (`payload.cost_usd` on the completion event). These views use metric widths,
+not elapsed time. Missing measurements remain unavailable, rather than being estimated.
+The timing summary reports observed calls and does not infer root cause or a critical path.
+Unmatched events, including debug pauses and ambiguous legacy completions, remain
+accessible in the markers list. For concurrent calls with the same name, supply unique
+`call_id` values on both boundaries; supply `parent_call_id` on the start event for nesting.
+No automatic retry relationship or dependency inference is performed.
+
+Run chart layout tests with `cd frontend && npm test`.

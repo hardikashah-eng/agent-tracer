@@ -192,3 +192,33 @@ Click operation bars, switch elapsed-time/token/cost views, and explore the five
 insight tabs. All data is synthetic. The live/recorded selector illustrates viewing
 modes and does not connect to a running agent. This is an illustrative sample, not
 a screenshot or a replacement for the full debugger.
+
+### Goal alignment and source provenance
+
+Flame-chart calls now have green/red/amber alignment indicators and a **Goal &
+provenance** detail tab in both live and recorded views. The first `agent.start`
+event anchors the original goal: `payload.goal = {"id":"g1","text":"Fix login tests"}`.
+Goal changes require a new run; later payloads cannot overwrite that anchor.
+
+Capture source metadata on each prompt message: `source_id`, `source_type`,
+`source_event_seq`, and `goal_ids`. `snapshot_context(..., call_id="call-1", goal=...)`
+retains these fields and adds a SHA-256 content version. Pass the same call ID on
+both LLM boundaries. Completion events can include `supporting_source_ids` and:
+
+```json
+{"goal_alignment":{"goal_id":"g1","assessor":"scope-validator",
+"evidence_source_ids":["test-report"],"checks":[
+{"name":"Only approved files modified","passed":true}]}}
+```
+
+Green means all supplied checks passed with an explicit original-goal match and
+linked, resolvable source evidence. Red signals failed reported checks or a
+mismatched goal ID. Amber marks incomplete/unverified evidence; gray means no
+assessment. Colors describe reported evidence, not an independent semantic judge
+or a security guarantee. Existing traces without this instrumentation remain gray.
+A token-size composition percentage is not causal influence. The current version
+does not run an LLM drift judge, infer hidden reasoning, or automatically block actions.
+
+Run `python -m examples.goal_provenance_demo`, then open its recorded session to
+see synthetic green/red examples. Implement actual checks in your harness before
+using alignment signals operationally. Browser interaction testing remains pending.

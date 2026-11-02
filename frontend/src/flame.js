@@ -1,3 +1,4 @@
+import {usageDetails} from './spanInsights.js';
 // Preserve timestamps: never infer nesting or pair ambiguous concurrent calls.
 export function buildSpans(events) {
   const sorted = events.filter(e => Number.isFinite(e.ts)).slice().sort((a,b)=>a.ts-b.ts || a.seq-b.seq);
@@ -12,9 +13,9 @@ export function buildSpans(events) {
       const candidates = pending.filter(s=>s.family===family && (id ? s.id===id : s.name===e.name));
       if (candidates.length===1) {
         const s=candidates[0]; s.end=e.ts; s.open=false; s.finish=e; s.error=['error','failed'].includes(phase); pending.splice(pending.indexOf(s),1);
-        const p=e.payload || {}, t=p.tokens || p.usage;
-        s.tokens=t ? Number(t.total_tokens ?? ((t.input ?? t.input_tokens ?? t.prompt_tokens ?? 0)+(t.output ?? t.output_tokens ?? t.completion_tokens ?? 0))) : null;
-        s.cost=Number.isFinite(p.cost_usd) ? p.cost_usd : null;
+        const metrics=usageDetails(e.payload);
+        s.tokens=metrics.total;
+        s.cost=metrics.cost;
       } else markers.push(e);
     } else markers.push(e);
   }

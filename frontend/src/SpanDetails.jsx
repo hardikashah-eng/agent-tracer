@@ -1,12 +1,14 @@
 import React,{useState} from 'react';
+import GoalProvenance from './GoalProvenance';
 import {spanInsights} from './spanInsights.js';
 const show=v=>v===null||v===undefined?'Not captured':v;
 const json=v=>JSON.stringify(v,null,2);
 export default function SpanDetails({span,events,onSelect,onClose}) {
  const [tab,setTab]=useState('Overview');
  const info=spanInsights(span,events),u=info.usage;
- const tabs=['Overview','Tokens & cost','Content','Context changes','Decision evidence'];
+ const tabs=['Overview','Tokens & cost','Content','Context changes','Decision evidence','Goal & provenance'];
  return <aside className="span-drawer" aria-label="Operation details"><div className="span-heading"><h4>{span.name} · {span.family}</h4><button onClick={onClose} aria-label="Close operation details">Close</button></div><p aria-live="polite">{span.open?'Awaiting completion; details update as events arrive.':span.error?'Failed operation.':'Completed operation.'} Observed duration: {(span.duration*1000).toFixed(1)} ms.</p><div className="span-tabs" role="tablist" aria-label="Operation insights">{tabs.map(t=><button key={t} id={`span-tab-${t.replaceAll(' ','-')}`} role="tab" aria-selected={t===tab} aria-controls="span-tab-panel" onClick={()=>setTab(t)}>{t}</button>)}</div><div role="tabpanel" id="span-tab-panel" aria-labelledby={`span-tab-${tab.replaceAll(' ','-')}`}>
+ {tab==='Goal & provenance'&&<GoalProvenance span={span} events={events} context={info.context} onSelect={onSelect}/>}
  {tab==='Overview'&&<><dl><dt>Call ID</dt><dd>{span.id}</dd><dt>Parent</dt><dd>{span.parent||'Not supplied'}{span.invalidParent?' (cycle detected)':''}</dd><dt>Model</dt><dd>{show(info.model)}</dd><dt>Attempt</dt><dd>{show(info.attempt)}</dd><dt>Retry of</dt><dd>{show(info.retryOf)}</dd></dl>{span.finish?.error&&<pre>{json(span.finish.error)}</pre>}<button onClick={()=>onSelect?.(span.event)}>Inspect start event #{span.event.seq}</button>{span.finish&&<button onClick={()=>onSelect?.(span.finish)}>Inspect end event #{span.finish.seq}</button>}</>}
  {tab==='Tokens & cost'&&<><dl>{Object.entries({Input:u.input,Output:u.output,Total:u.total,'Cached input (subset)':u.cached,'Reasoning output (subset)':u.reasoning,'Cost (USD)':u.cost}).map(([k,v])=><React.Fragment key={k}><dt>{k}</dt><dd>{show(v)}</dd></React.Fragment>)}</dl><p>Provider-reported counts only. Cached and reasoning tokens are subsets; they are not added again. Missing values are not zero.</p>{info.messages.length>0&&<><h4>Context contribution estimates</h4><p>{info.contextAttribution} · character-based estimates, not billed tokens.</p><ul>{info.messages.map((m,i)=><li key={i}>{m.source||m.id||m.role}: {show(m.estimated_tokens)} estimated tokens</li>)}</ul></>}</>}
  {tab==='Content'&&<><h4>Captured start payload</h4><pre>{json(span.event.payload)}</pre><h4>Captured completion payload</h4><pre>{span.finish?json(span.finish.payload):'Awaiting completion or completion was not captured.'}</pre><h4>Associated prompt snapshot</h4><p>{info.contextAttribution}</p><pre>{info.context?json(info.messages):'No snapshot captured.'}</pre></>}

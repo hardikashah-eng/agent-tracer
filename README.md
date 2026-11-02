@@ -161,3 +161,22 @@ accessible in the markers list. For concurrent calls with the same name, supply 
 No automatic retry relationship or dependency inference is performed.
 
 Run chart layout tests with `cd frontend && npm test`.
+
+
+### Live and recorded operation insights
+
+Click any flame-chart call to open Overview, Tokens & cost, Content, Context changes,
+and Decision evidence. The drawer updates when new events arrive and provides the
+same analysis when opening a recorded candidate trace in Investigation workspace
+(or selecting a saved session in the sidecar). No model or tool execution is required
+for recorded analysis.
+
+Usage supports `tokens`/`usage`, input/output aliases, provider total tokens, cached
+input details and reasoning output details. Cached/reasoning counts are subsets.
+USD cost is read from `cost_usd`; absent data is never priced or estimated.
+Explicit plans, decisions, explanations, rationale, reasoning summaries and validation
+fields are shown with source event links. Hidden chain-of-thought is not exposed.
+Prompt snapshots linked by call ID are preferred; legacy nearest-preceding snapshots
+are labeled unverified. Context changes compare with the previous recorded snapshot,
+which may belong to another concurrent call. Character-based context contributions
+are labeled estimates and are separate from reported usage.

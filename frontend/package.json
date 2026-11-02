@@ -7,7 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test src/flame.test.js"
+    "test": "node --test src/*.test.js"
   },
   "dependencies": {
     "react": "^19.0.0",

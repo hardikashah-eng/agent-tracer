@@ -18,9 +18,23 @@ from .comparison import compare
 from .replay import export_fixture, evaluate, intervention
 from .infrastructure import correlate, experiment_plan
 from .trials import summarize
+from .advisor import analyze_sessions
+from fastapi import Query
 from fastapi.responses import JSONResponse
+import json
 
-app = FastAPI(title='Agent Tracer', version='0.9.0')
+
+def load_catalog():
+    """Optional tool catalog for the advisor (ownership, transport, definition tokens)."""
+    path = os.environ.get('AGENT_TRACER_TOOL_CATALOG')
+    if not path:
+        return {}
+    try:
+        return json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(500, f'Could not read AGENT_TRACER_TOOL_CATALOG: {exc}') from exc
+
+app = FastAPI(title='Agent Tracer', version='1.0.0')
 app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:5173', 'http://127.0.0.1:5173'], allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
 
 class SessionMetadata(BaseModel):
@@ -104,6 +118,22 @@ async def diagnosis(sid: str):
 @app.get('/api/sessions/{sid}/efficiency')
 def efficiency(sid: str):
     return analyze(get_session(sid).events)
+
+
+def _advisor_body(s):
+    return {'id': s.id, 'status': s.status, 'events': copy.deepcopy(s.events), 'metadata': s.metadata}
+
+@app.get('/api/sessions/{sid}/advisor')
+def session_advisor(sid: str):
+    return analyze_sessions([_advisor_body(get_session(sid))], load_catalog())
+
+@app.get('/api/advisor')
+def advisor(session_id: list[str] | None = Query(default=None)):
+    if session_id:
+        chosen = [get_session(sid) for sid in session_id]
+    else:
+        chosen = [s for s in tracer.sessions.values() if not (s.metadata or {}).get('analysis')]
+    return analyze_sessions([_advisor_body(s) for s in chosen], load_catalog())
 
 
 @app.get('/api/sessions/{sid}/provenance')

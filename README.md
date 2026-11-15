@@ -222,3 +222,32 @@ does not run an LLM drift judge, infer hidden reasoning, or automatically block 
 Run `python -m examples.goal_provenance_demo`, then open its recorded session to
 see synthetic green/red examples. Implement actual checks in your harness before
 using alignment signals operationally. Browser interaction testing remains pending.
+
+## v1.0 — Harness Advisor (cross-session recommendations)
+
+The advisor reads **many** captured sessions and reports where time and input
+tokens go, which work is wasted, which calls keep failing, and **what to change**.
+For example, it can suggest moving a paginated third-party MCP to code mode,
+deferring unused tool schemas, or adding a retry guard. Every recommendation
+carries estimated per-session savings, evidence links, and the **lever owner**:
+harness, gateway, server owner, or vendor request. For third-party MCP servers
+you cannot change (for example a vendor's Bitbucket or Jira server), only levers
+you control are suggested.
+
+```bash
+python -m examples.advisor_demo        # writes synthetic sessions to examples/advisor/sessions/ + the sample report
+python -m backend.advisor examples/advisor/sessions/*.json \
+    --catalog examples/advisor/catalog.json --format html -o advisor-report.html
+python -m backend.advisor --db data/agent-tracer.sqlite3 --format md
+python -m backend.advisor otel-export.json --otel --format json   # OTLP/JSON GenAI + MCP spans
+```
+
+API: `GET /api/sessions/{id}/advisor` and `GET /api/advisor?session_id=a&session_id=b`
+(all captured sessions when omitted). Set `AGENT_TRACER_TOOL_CATALOG` to a catalog
+JSON to add ownership, transport, read/write kind and schema cost.
+
+Design, detectors, the third-party MCP playbook and limitations are in
+[docs/HARNESS_ADVISOR.md](docs/HARNESS_ADVISOR.md). See the
+[sample report](docs/samples/advisor-report.html); download the raw file to view it
+offline. Findings are deterministic heuristics; validate top recommendations with
+paired trials before adopting them.

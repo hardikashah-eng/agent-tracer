@@ -1,0 +1,123 @@
+{
+  "tools": {
+    "list_pull_requests": {
+      "server": "bitbucket",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "read",
+      "definition_tokens": 410
+    },
+    "get_pull_request_diff": {
+      "server": "bitbucket",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "read",
+      "definition_tokens": 380
+    },
+    "get_pull_request_activity": {
+      "server": "bitbucket",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "read",
+      "definition_tokens": 360
+    },
+    "create_pull_request_comment": {
+      "server": "bitbucket",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "write",
+      "definition_tokens": 450
+    },
+    "get_issue": {
+      "server": "jira",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "read",
+      "definition_tokens": 520
+    },
+    "search_code": {
+      "server": "internal-dev",
+      "ownership": "first_party",
+      "transport": "mcp",
+      "kind": "read",
+      "definition_tokens": 300
+    },
+    "run_tests": {
+      "server": "local",
+      "ownership": "first_party",
+      "transport": "cli",
+      "kind": "read",
+      "definition_tokens": 150
+    },
+    "jira_create_issue": {
+      "server": "jira",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "write",
+      "definition_tokens": 640
+    },
+    "jira_transition_issue": {
+      "server": "jira",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "write",
+      "definition_tokens": 580
+    },
+    "jira_add_worklog": {
+      "server": "jira",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "write",
+      "definition_tokens": 470
+    },
+    "jira_search_jql": {
+      "server": "jira",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "read",
+      "definition_tokens": 610
+    },
+    "jira_get_sprint": {
+      "server": "jira",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "read",
+      "definition_tokens": 420
+    },
+    "jira_link_issues": {
+      "server": "jira",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "write",
+      "definition_tokens": 430
+    },
+    "confluence_search": {
+      "server": "confluence",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "read",
+      "definition_tokens": 560
+    },
+    "confluence_get_page": {
+      "server": "confluence",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "read",
+      "definition_tokens": 480
+    },
+    "confluence_create_page": {
+      "server": "confluence",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "write",
+      "definition_tokens": 720
+    },
+    "confluence_update_page": {
+      "server": "confluence",
+      "ownership": "third_party",
+      "transport": "mcp",
+      "kind": "write",
+      "definition_tokens": 690
+    }
+  }
+}

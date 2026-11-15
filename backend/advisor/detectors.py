@@ -135,7 +135,7 @@ def detect_session(trace: SessionTrace, decomposition: dict, config: AdvisorConf
             out.append(_finding('large_low_use_result', c.name, trace, [c.seq, c.end_seq], 'medium',
                                 f'{c.name} returned ~{c.result_tokens} tokens; only ~{ratio:.0%} of its distinctive content reappears later.',
                                 {'result_tokens': c.result_tokens, 'used_ratio': round(ratio, 3),
-                                 'reported_ratio': c.used_ratio is not None},
+                                 'ratio_source': c.used_ratio_source or 'lexical'},
                                 {'tokens': c.result_tokens * (1 - keep)}, 'efficiency', ownership=c.ownership))
 
     # chatty_tool: many distinct-arg calls to read tools, each in its own model turn.

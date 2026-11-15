@@ -1,46 +1,46 @@
 # Harness Advisor report
 
-Sessions **6** · model turns **82** · tool calls **100** · input tokens **1,497,668** · cache-read ratio **0.1**
+Sessions **20** · model turns **236** · tool calls **276** · input tokens **3,908,667** · cache-read ratio **0.1**
 
 ## Latency (all sessions)
 
 | Component | ms | Share |
 |---|---:|---:|
-| Model | 259,984 | 70% |
-| Tool: upstream API | 81,643 | 22% |
-| Tool: protocol/gateway | 22,553 | 6% |
+| Model | 740,823 | 70% |
+| Tool: upstream API | 241,820 | 23% |
+| Tool: protocol/gateway | 58,820 | 6% |
 | Tool: unsplit | 0 | 0% |
-| Harness / idle | 6,700 | 2% |
+| Harness / idle | 19,320 | 2% |
 
 ## Token budget (input, all turns)
 
 | Category | Tokens | Share |
 |---|---:|---:|
-| System prompt | 1,886 | 0% |
-| Tool definitions | 669,524 | 45% |
-| Conversation | 6,920 | 0% |
-| Tool results | 819,338 | 55% |
+| System prompt | 5,428 | 0% |
+| Tool definitions | 1,926,893 | 49% |
+| Conversation | 18,194 | 0% |
+| Tool results | 1,958,154 | 50% |
 | Other / unclassified | 0 | 0% |
 
-Tool definitions by server: jira 300,762, confluence 200,774, bitbucket 131,123, internal-dev 24,600, local 12,300
+Tool definitions by server: jira 865,592, confluence 577,834, bitbucket 377,373, internal-dev 70,800, local 35,400
 
-Tool results by tool: get_pull_request_diff 548,413, list_pull_requests 258,415, get_pull_request_activity 11,224, get_issue 707, search_code 546, run_tests 42
+Tool results by tool: get_pull_request_diff 1,305,482, list_pull_requests 618,476, get_pull_request_activity 26,718, execute_code 3,360, get_issue 2,103, search_code 1,898, run_tests 140
 
 ## Efficiency and efficacy
 
-- Duplicate fetch calls: 3
-- Estimated recoverable input tokens (combined, overlapping fixes discounted): 1,102,283 (74%)
-- Tool error rate: 0.14
-- Repeated identical failing calls: 8
-- Model turns per tool call: 0.82
+- Duplicate fetch calls: 11
+- Estimated recoverable input tokens (combined, overlapping fixes discounted): 2,786,879 (71%)
+- Tool error rate: 0.13
+- Repeated identical failing calls: 16
+- Model turns per tool call: 0.86
 
 ## Recommendations
 
 ### 1. Move bitbucket calls to code mode or a CLI  `high` · efficiency
 
-Each page or item costs a full model turn; a script can paginate and fan out in one step and return only the aggregate. Affects 6/6 sessions (6 occurrences). Ownership: **third_party**.
+Each page or item costs a full model turn; a script can paginate and fan out in one step and return only the aggregate. Affects 15/20 sessions (15 occurrences). Ownership: **third_party**.
 
-Estimated saving per session: ~131,405 tokens · ~20,560 ms · ~6.5 model turns.
+Estimated saving per session: ~97,219 tokens · ~15,396 ms · ~4.85 model turns.
 
 > Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
 
@@ -61,9 +61,9 @@ Estimated saving per session: ~131,405 tokens · ~20,560 ms · ~6.5 model turns.
 
 ### 2. Defer or list-only unused jira tools  `medium` · efficiency
 
-These schemas are paid for on every model turn but the tools are rarely called. Affects 6/6 sessions (1 occurrence). Ownership: **third_party**.
+These schemas are paid for on every model turn but the tools are rarely called. Affects 20/20 sessions (1 occurrence). Ownership: **third_party**.
 
-Estimated saving per session: ~43,050 tokens.
+Estimated saving per session: ~37,170 tokens.
 
 > Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
 
@@ -77,11 +77,29 @@ Estimated saving per session: ~43,050 tokens.
 
 </details>
 
-### 3. Stop retry loops on get_issue  `high` · efficacy
+### 3. Defer or list-only unused confluence tools  `medium` · efficiency
 
-Identical failing calls were repeated without changing arguments. Affects 4/6 sessions (4 occurrences). Ownership: **third_party**.
+These schemas are paid for on every model turn but the tools are rarely called. Affects 20/20 sessions (1 occurrence). Ownership: **third_party**.
 
-Estimated saving per session: ~24,544 tokens · ~5,217 ms · ~1.33 model turns.
+Estimated saving per session: ~28,910 tokens.
+
+> Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
+
+- **Harness:** Mark the unused confluence tools deferred (tool search / defer_loading) so schemas load only when searched.
+- **Harness:** Or remove them from this agent's allowlist and move the workflow into a skill that loads on demand.
+- **Gateway:** Expose a curated virtual confluence server that omits these tools for this agent.
+
+<details><summary>Evidence</summary>
+
+- cross-session: 4 confluence tool schemas add ~2450 tokens to every turn but were called in at most 0% of sessions: confluence_create_page, confluence_update_page, confluence_search, confluence_get_page.
+
+</details>
+
+### 4. Stop retry loops on get_issue  `high` · efficacy
+
+Identical failing calls were repeated without changing arguments. Affects 8/20 sessions (8 occurrences). Ownership: **third_party**.
+
+Estimated saving per session: ~10,706 tokens · ~2,906 ms · ~0.8 model turns.
 
 > Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
 
@@ -96,32 +114,36 @@ Estimated saving per session: ~24,544 tokens · ~5,217 ms · ~1.33 model turns.
 - session `pr-review-03` seqs [52, 57, 62]: get_issue failed 3 times with identical arguments and the same error (validation_error).
 - session `pr-review-05` seqs [52, 57, 62]: get_issue failed 3 times with identical arguments and the same error (validation_error).
 - session `pr-review-06` seqs [47, 52, 57]: get_issue failed 3 times with identical arguments and the same error (validation_error).
+- session `trial-1-variant` seqs [9, 14, 19]: get_issue failed 3 times with identical arguments and the same error (validation_error).
 
 </details>
 
-### 4. Defer or list-only unused confluence tools  `medium` · efficiency
+### 5. Memoize search_code reads within a session  `medium` · efficiency
 
-These schemas are paid for on every model turn but the tools are rarely called. Affects 6/6 sessions (1 occurrence). Ownership: **third_party**.
+The same read with the same arguments was repeated, re-adding identical data to context. Affects 11/20 sessions (11 occurrences). Ownership: **first_party**.
 
-Estimated saving per session: ~33,483 tokens.
+Estimated saving per session: ~8,529 tokens · ~1,918 ms · ~0.55 model turns.
 
-> Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
-
-- **Harness:** Mark the unused confluence tools deferred (tool search / defer_loading) so schemas load only when searched.
-- **Harness:** Or remove them from this agent's allowlist and move the workflow into a skill that loads on demand.
-- **Gateway:** Expose a curated virtual confluence server that omits these tools for this agent.
+- **Harness:** Cache read-only results per session keyed by tool + arguments; return the cached copy or a reference.
+- **Harness:** Keep earlier results reachable (avoid compacting them away) so the model does not re-fetch.
+- **Server owner:** Mark the tool as read-only/idempotent so clients can cache safely.
+- **Gateway:** Enable a short-TTL response cache for search_code on the gateway.
 
 <details><summary>Evidence</summary>
 
-- cross-session: 4 confluence tool schemas add ~2450 tokens to every turn but were called in at most 0% of sessions: confluence_create_page, confluence_update_page, confluence_search, confluence_get_page.
+- session `pr-review-02` seqs [62, 67]: 2 identical successful calls to search_code returned the same result.
+- session `pr-review-04` seqs [57, 62]: 2 identical successful calls to search_code returned the same result.
+- session `pr-review-06` seqs [62, 67]: 2 identical successful calls to search_code returned the same result.
+- session `pr-review-08` seqs [57, 62]: 2 identical successful calls to search_code returned the same result.
+- session `pr-review-10` seqs [57, 62]: 2 identical successful calls to search_code returned the same result.
 
 </details>
 
-### 5. Shrink get_pull_request_diff results before they reach the model  `medium` · efficiency
+### 6. Shrink get_pull_request_diff results before they reach the model  `medium` · efficiency
 
-Large results are paid for on this and every later turn, yet most of the content is never used. Affects 6/6 sessions (24 occurrences). Ownership: **third_party**.
+Large results are paid for on this and every later turn, yet most of the content is never used. Affects 15/20 sessions (60 occurrences). Ownership: **third_party**.
 
-Estimated saving per session: ~9,544 tokens.
+Estimated saving per session: ~7,158 tokens.
 
 > Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
 
@@ -141,30 +163,11 @@ Estimated saving per session: ~9,544 tokens.
 
 </details>
 
-### 6. Memoize search_code reads within a session  `medium` · efficiency
-
-The same read with the same arguments was repeated, re-adding identical data to context. Affects 3/6 sessions (3 occurrences). Ownership: **first_party**.
-
-Estimated saving per session: ~9,175 tokens · ~1,778 ms · ~0.5 model turns.
-
-- **Harness:** Cache read-only results per session keyed by tool + arguments; return the cached copy or a reference.
-- **Harness:** Keep earlier results reachable (avoid compacting them away) so the model does not re-fetch.
-- **Server owner:** Mark the tool as read-only/idempotent so clients can cache safely.
-- **Gateway:** Enable a short-TTL response cache for search_code on the gateway.
-
-<details><summary>Evidence</summary>
-
-- session `pr-review-02` seqs [62, 67]: 2 identical successful calls to search_code returned the same result.
-- session `pr-review-04` seqs [57, 62]: 2 identical successful calls to search_code returned the same result.
-- session `pr-review-06` seqs [62, 67]: 2 identical successful calls to search_code returned the same result.
-
-</details>
-
 ### 7. Defer or list-only unused bitbucket tools  `medium` · efficiency
 
-These schemas are paid for on every model turn but the tools are rarely called. Affects 6/6 sessions (1 occurrence). Ownership: **third_party**.
+These schemas are paid for on every model turn but the tools are rarely called. Affects 20/20 sessions (1 occurrence). Ownership: **third_party**.
 
-Estimated saving per session: ~6,150 tokens.
+Estimated saving per session: ~5,310 tokens.
 
 > Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
 
@@ -178,26 +181,11 @@ Estimated saving per session: ~6,150 tokens.
 
 </details>
 
-### 8. Stabilise the cached prompt prefix  `medium` · efficiency
+### 8. Fix get_issue schema and descriptions  `high` · efficacy
 
-Low cache-read ratio while the system/tool prefix changes between turns. Affects 1/6 sessions (1 occurrence). Ownership: **harness**.
+A high share of calls fail, usually from mis-specified arguments rather than upstream outages. Affects 20/20 sessions (1 occurrence). Ownership: **third_party**.
 
-Estimated saving per session: ~8,597 tokens.
-
-- **Harness:** Make tool order and system prompt deterministic; move volatile content (time, IDs) after the cache breakpoint.
-- **Harness:** Use deferred tools so discovered tools are appended rather than changing the prefix.
-
-<details><summary>Evidence</summary>
-
-- session `pr-review-03` seqs [2, 7, 12, 17, 22, 29, 36, 43, 50, 55, 60, 65]: Only 10% of input tokens were cache reads; the system/tool prefix changed 4 times.
-
-</details>
-
-### 9. Fix get_issue schema and descriptions  `high` · efficacy
-
-A high share of calls fail, usually from mis-specified arguments rather than upstream outages. Affects 6/6 sessions (1 occurrence). Ownership: **third_party**.
-
-Estimated saving per session: ~1,432 ms · ~2.33 model turns.
+Estimated saving per session: ~1,067 ms · ~1.8 model turns.
 
 > Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
 
@@ -208,15 +196,15 @@ Estimated saving per session: ~1,432 ms · ~2.33 model turns.
 
 <details><summary>Evidence</summary>
 
-- cross-session: get_issue failed on 88% of 16 calls across sessions.
+- cross-session: get_issue failed on 75% of 48 calls across sessions.
 
 </details>
 
-### 10. Shrink list_pull_requests results before they reach the model  `medium` · efficiency
+### 9. Shrink list_pull_requests results before they reach the model  `medium` · efficiency
 
-Large results are paid for on this and every later turn, yet most of the content is never used. Affects 6/6 sessions (21 occurrences). Ownership: **third_party**.
+Large results are paid for on this and every later turn, yet most of the content is never used. Affects 15/20 sessions (52 occurrences). Ownership: **third_party**.
 
-Estimated saving per session: ~3,027 tokens.
+Estimated saving per session: ~2,249 tokens.
 
 > Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
 
@@ -236,11 +224,26 @@ Estimated saving per session: ~3,027 tokens.
 
 </details>
 
+### 10. Stabilise the cached prompt prefix  `medium` · efficiency
+
+Low cache-read ratio while the system/tool prefix changes between turns. Affects 1/20 sessions (1 occurrence). Ownership: **harness**.
+
+Estimated saving per session: ~2,579 tokens.
+
+- **Harness:** Make tool order and system prompt deterministic; move volatile content (time, IDs) after the cache breakpoint.
+- **Harness:** Use deferred tools so discovered tools are appended rather than changing the prefix.
+
+<details><summary>Evidence</summary>
+
+- session `pr-review-03` seqs [2, 7, 12, 17, 22, 29, 36, 43, 50, 55, 60, 65]: Only 10% of input tokens were cache reads; the system/tool prefix changed 4 times.
+
+</details>
+
 ### 11. Cut transport overhead on the bitbucket server  `low` · latency
 
-Most of the tool time is spent outside the upstream API (MCP client/server, gateway, serialization). Affects 6/6 sessions (6 occurrences). Ownership: **third_party**.
+Most of the tool time is spent outside the upstream API (MCP client/server, gateway, serialization). Affects 15/20 sessions (15 occurrences). Ownership: **third_party**.
 
-Estimated saving per session: ~2,093 ms.
+Estimated saving per session: ~1,565 ms.
 
 > Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
 
@@ -260,9 +263,9 @@ Estimated saving per session: ~2,093 ms.
 
 ### 12. Cut transport overhead on the jira server  `low` · latency
 
-Most of the tool time is spent outside the upstream API (MCP client/server, gateway, serialization). Affects 6/6 sessions (6 occurrences). Ownership: **third_party**.
+Most of the tool time is spent outside the upstream API (MCP client/server, gateway, serialization). Affects 20/20 sessions (20 occurrences). Ownership: **third_party**.
 
-Estimated saving per session: ~485 ms.
+Estimated saving per session: ~437 ms.
 
 > Third-party server: only levers you control are listed (harness, gateway, facade) plus a vendor request.
 
@@ -280,16 +283,63 @@ Estimated saving per session: ~485 ms.
 
 </details>
 
+## Verification plans (top recommendations)
+
+### Verify: Move bitbucket calls to code mode or a CLI
+
+- **Experiment:** `exp-chatty_tool-654d4302`
+- **Hypothesis:** Applying 'Expose bitbucket through code mode: generate typed stubs from tools/list (MCPorter emit-ts, code2mcp) and let the model write one script that loops in a sandbox.' lowers mean input_tokens per task by about 97,219 (baseline 239,961) without reducing task success by more than 5%.
+- **Change (variant arm):** Expose bitbucket through code mode: generate typed stubs from tools/list (MCPorter emit-ts, code2mcp) and let the model write one script that loops in a sandbox.
+- **Primary metric:** input_tokens (baseline mean 239,961, SD 11,151, expected −97,219 per task)
+- **Design:** 5 task pairs, paired by task, same model and inputs, randomised arm order; sizing: paired normal approximation using between-session SD as a conservative proxy for paired-difference SD
+- **Guardrails:** success: variant success rate ≥ baseline − 5%; wall_ms: no increase > 10%
+- **Tag sessions with:** `{"experiment_id": "exp-chatty_tool-654d4302", "arm": "baseline | variant", "task_id": "<one of design.tasks>", "recommendation_id": "chatty_tool:bitbucket"}`
+- **Tasks to start with:** pr-review-01, pr-review-02, pr-review-03, pr-review-04, pr-review-05
+- **Result: CONFIRMED** — mean change -171,790 (95% CI -176,569 to -167,010, -74%) over 5 pairs. The 95% interval of the paired change is entirely below zero and success did not drop.
+
+### Verify: Defer or list-only unused jira tools
+
+- **Experiment:** `exp-dead_schema-d9e17250`
+- **Hypothesis:** Applying 'Mark the unused jira tools deferred (tool search / defer_loading) so schemas load only when searched.' lowers mean input_tokens per task by about 37,170 (baseline 195,433) without reducing task success by more than 5%.
+- **Change (variant arm):** Mark the unused jira tools deferred (tool search / defer_loading) so schemas load only when searched.
+- **Primary metric:** input_tokens (baseline mean 195,433, SD 79,733, expected −37,170 per task)
+- **Design:** 37 task pairs, paired by task, same model and inputs, randomised arm order; sizing: paired normal approximation using between-session SD as a conservative proxy for paired-difference SD
+- **Guardrails:** success: variant success rate ≥ baseline − 5%; wall_ms: no increase > 10%
+- **Tag sessions with:** `{"experiment_id": "exp-dead_schema-d9e17250", "arm": "baseline | variant", "task_id": "<one of design.tasks>", "recommendation_id": "dead_schema:jira"}`
+- **Tasks to start with:** pr-review-01, pr-review-02, pr-review-03, pr-review-04, pr-review-05, pr-review-06, pr-review-07, pr-review-08
+
+### Verify: Defer or list-only unused confluence tools
+
+- **Experiment:** `exp-dead_schema-240ac84d`
+- **Hypothesis:** Applying 'Mark the unused confluence tools deferred (tool search / defer_loading) so schemas load only when searched.' lowers mean input_tokens per task by about 28,910 (baseline 195,433) without reducing task success by more than 5%.
+- **Change (variant arm):** Mark the unused confluence tools deferred (tool search / defer_loading) so schemas load only when searched.
+- **Primary metric:** input_tokens (baseline mean 195,433, SD 79,733, expected −28,910 per task)
+- **Design:** 60 task pairs, paired by task, same model and inputs, randomised arm order; sizing: paired normal approximation using between-session SD as a conservative proxy for paired-difference SD
+- **Guardrails:** success: variant success rate ≥ baseline − 5%; wall_ms: no increase > 10%
+- **Tag sessions with:** `{"experiment_id": "exp-dead_schema-240ac84d", "arm": "baseline | variant", "task_id": "<one of design.tasks>", "recommendation_id": "dead_schema:confluence"}`
+- **Tasks to start with:** pr-review-01, pr-review-02, pr-review-03, pr-review-04, pr-review-05, pr-review-06, pr-review-07, pr-review-08
+
+## Savings ledger
+
+Cumulative tokens saved: **98,179** · per session: **24,545** · Realized 1
+
+| Applied | Recommendation | Status | Expected tok/session | Realized tok/session | Sessions before → after |
+|---|---|---|---:|---:|---|
+| 2026-09-21 | Stop retry loops on get_issue | Realized | 24,544 | 24,545 | 6 → 4 |
+
+> Before/after comparison over observed sessions; workload mix, model or prompt changes can confound it. Use verification plans for causal confirmation.
+
 ## Tool scorecard
 
 | Tool | Server | Transport | Ownership | Calls | Sessions | Errors | Dupes | Avg result tok | Avg ms | Def tok | Flags |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|
-| get_issue | jira | mcp | third_party | 16 | 6 | 88% | 0% | 1 | 611 | 520 | failure_loop, high_error_rate |
-| get_pull_request_diff | bitbucket | mcp | third_party | 24 | 6 | 0% | 0% | 2,983 | 752 | 380 | large_low_use_result |
-| list_pull_requests | bitbucket | mcp | third_party | 21 | 6 | 0% | 0% | 1,082 | 622 | 410 | large_low_use_result |
-| search_code | internal-dev | mcp | first_party | 9 | 6 | 0% | 33% | 26 | 399 | 300 | duplicate_fetch |
-| get_pull_request_activity | bitbucket | mcp | third_party | 24 | 6 | 0% | 0% | 61 | 627 | 360 |  |
-| run_tests | local | cli | first_party | 6 | 6 | 0% | 0% | 7 | 7,442 | 150 |  |
+| get_issue | jira | mcp | third_party | 48 | 20 | 75% | 0% | 3 | 589 | 520 | failure_loop, high_error_rate |
+| get_pull_request_diff | bitbucket | mcp | third_party | 60 | 15 | 0% | 0% | 2,983 | 735 | 380 | large_low_use_result |
+| list_pull_requests | bitbucket | mcp | third_party | 52 | 15 | 0% | 0% | 1,082 | 639 | 410 | large_low_use_result |
+| search_code | internal-dev | mcp | first_party | 31 | 20 | 0% | 36% | 26 | 378 | 300 | duplicate_fetch |
+| get_pull_request_activity | bitbucket | mcp | third_party | 60 | 15 | 0% | 0% | 61 | 600 | 360 |  |
+| run_tests | local | cli | first_party | 20 | 20 | 0% | 0% | 7 | 6,541 | 150 |  |
+| execute_code | bitbucket | code | unknown | 5 | 5 | 0% | 0% | 105 | 3,294 | – |  |
 | confluence_create_page | confluence | mcp | third_party | 0 | 0 | – | – | 0 | – | 720 |  |
 | confluence_get_page | confluence | mcp | third_party | 0 | 0 | – | – | 0 | – | 480 |  |
 | confluence_search | confluence | mcp | third_party | 0 | 0 | – | – | 0 | – | 560 |  |

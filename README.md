@@ -251,3 +251,24 @@ Design, detectors, the third-party MCP playbook and limitations are in
 [sample report](docs/samples/advisor-report.html); download the raw file to view it
 offline. Findings are deterministic heuristics; validate top recommendations with
 paired trials before adopting them.
+
+### v1.1 — Judge, dashboard, verification and savings ledger
+
+- **Dashboard panel:** the main debugger now has a **Harness Advisor** panel with
+  stacked token-budget and latency charts, a per-session turn composition chart
+  and latency waterfall, a sortable tool scorecard, recommendations, and the
+  ledger. Click **Analyze sessions**.
+- **Optional LLM judge:** judges tool-selection quality and semantic result usage
+  on a sample of calls. Configure `AGENT_TRACER_JUDGE=openai|anthropic`,
+  `AGENT_TRACER_JUDGE_MODEL`, `AGENT_TRACER_JUDGE_URL` and
+  `AGENT_TRACER_JUDGE_API_KEY`. OpenAI-compatible endpoints include on-prem vLLM.
+  Excerpts are truncated and redacted; verdicts are cached and labelled `llm_judge`.
+- **Verification plans:** paired-trial plans for the top recommendations, with
+  hypothesis, primary metric, sizing, guardrails and the metadata to tag runs
+  with. Plans are evaluated automatically when tagged sessions exist.
+- **Savings ledger:** **Mark applied** records a baseline. Later sessions show
+  whether the saving was realized, partial, had no effect, or regressed.
+
+Details are in [docs/HARNESS_ADVISOR.md](docs/HARNESS_ADVISOR.md) sections 4–7.
+`python -m examples.advisor_demo` now also simulates a retry-guard rollout
+(ledger: realized) and a code-mode paired trial (verdict: confirmed).

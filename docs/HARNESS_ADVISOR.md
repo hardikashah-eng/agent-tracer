@@ -1,4 +1,4 @@
-# Harness Advisor (v1.0) — design
+# Harness Advisor (v1.1) — design
 
 The Harness Advisor reads many recorded agent sessions and tells the harness
 owner **where time and tokens go, what is wasted, what keeps failing, and what to
@@ -35,10 +35,10 @@ captured sessions ──► 1. decompose ──► 2. detect ──► 3. recomm
 
 **Non-goals (v1)**
 
-- No LLM judge. Every detector is deterministic and reproducible. An LLM judge
-  for semantic questions, such as "was this the wrong tool?", is a later,
-  optional layer.
-- No automatic remediation. The advisor recommends; humans change harnesses.
+- No mandatory LLM. Every detector is deterministic and reproducible. The LLM
+  judge (section 4) is an opt-in layer for semantic questions.
+- No automatic remediation. The advisor recommends, plans verification and
+  tracks results; humans change harnesses.
 - No billing accuracy. Reported provider usage is preferred. Estimates use
   `chars / 4` and are always labelled `estimated`.
 
@@ -177,19 +177,122 @@ error messages.
 Tools missing from the catalog are treated as `unknown`. They get both
 `harness_owner` and `server_owner` levers, with a note to classify them.
 
+## 4. Optional LLM judge
+
+The deterministic detectors cannot answer two semantic questions:
+
+- Was this the right tool for the goal?
+- Did the model actually use a result that it paraphrased rather than copied?
+
+The judge answers both on a sample of calls:
+
+| Judgement | What is sent | Effect |
+|---|---|---|
+| `tool_selection` | Goal, the reasoning just before the call, the tool menu (names, servers, catalog descriptions), the chosen tool, its arguments and the outcome | Confident "poor choice" verdicts are grouped per tool into a `tool_selection` recommendation, often naming the better tool |
+| `result_usage` | Large tool results (≥ 800 tokens) plus later model output | A confident `used_ratio` replaces the lexical estimate, so `large_low_use_result` findings become semantic (`ratio_source: llm_judge`) |
+
+- **Off by default.** Enable it with environment variables:
+  - `AGENT_TRACER_JUDGE=openai` (any OpenAI-compatible server, e.g. **on-prem vLLM**, LiteLLM) or `anthropic`
+  - `AGENT_TRACER_JUDGE_MODEL`
+  - `AGENT_TRACER_JUDGE_URL` (e.g. `http://gpu-node:8000/v1`)
+  - `AGENT_TRACER_JUDGE_API_KEY`
+- **Data handling:** excerpts are truncated and passed through a secret/email redactor before they are sent. For sensitive traces, point the judge at an in-network model.
+- **Cost control:** at most 25 tool-selection and 15 result-usage judgements per run (configurable via `JudgeOptions`). Verdicts are cached by content hash, so re-analysis is cheap.
+- **Failure isolation:** judge errors are recorded in `report.judge.errors` and never break the deterministic report.
+- **Status:** verdicts are labelled `llm_judge` and are uncalibrated opinions. Treat them as leads.
+
+## 5. Dashboard panel (React UI)
+
+The **Harness Advisor** panel sits under *Potential root causes* in the main debugger. Its scope selector chooses all captured runs or the current run, and an optional LLM-judge toggle is enabled only when a judge is configured. It shows:
+
+- Summary cards: sessions, turns, tool calls, input tokens, estimated recoverable share, tool error rate, cache-read ratio, and ledger tokens saved.
+- **Stacked budget charts** of input tokens by category and of latency by component.
+- A **session drill-down**:
+  - per-turn stacked input-composition columns
+  - a **latency waterfall** of every model and tool call, with tool bars split into upstream API time and protocol/gateway overhead, and failures outlined
+- **Recommendations** with levers by owner, evidence, an inline **verification plan** (and its result once tagged sessions exist), and **Mark applied**, which records the change in the ledger.
+- A sortable **tool scorecard**, the **savings ledger** table, and the judge summary.
+
+The view logic lives in `frontend/src/advisorView.js` and is unit-tested with `npm test`.
+
+## 6. Recommendation verification (paired-trial plans)
+
+For the top N recommendations (default 3), the advisor generates a plan:
+
+- **Hypothesis**, the **variant arm** (the highest-leverage action you control), and the **control** (unchanged harness).
+- **Primary metric**, chosen by detector:
+  - `input_tokens` for schema/result/loop waste
+  - `uncached_input_tokens` for cache issues
+  - `wall_ms` for latency
+  - `tool_failures` for efficacy
+- The baseline mean and SD from affected sessions, the expected delta, and **pairs required**. Sizing uses a paired normal approximation with α = 0.05 and power 0.8, clamped to 5–200 pairs.
+- **Guardrails**: success-rate non-inferiority (−5 pp) and no >10% regression in a secondary metric.
+- **Tasks** that showed the problem, and the **metadata to tag** each run with: `experiment_id`, `arm`, `task_id`, `recommendation_id`.
+
+To run a plan:
+
+1. Replay each task once per arm, with the same model and inputs, in randomised order.
+2. Tag both sessions.
+3. Evaluate. Evaluation pairs sessions by `task_id` and computes the paired mean change with a t-interval, plus success non-inferiority.
+
+| Verdict | Meaning |
+|---|---|
+| `confirmed` | The 95% interval is entirely below zero and success did not drop |
+| `regressed` | The metric rose, or success dropped beyond the margin |
+| `inconclusive` | The interval includes zero |
+| `insufficient_data` | Fewer than 2 complete pairs |
+
+When tagged sessions are part of the analysed set, the plan's `result` is filled in automatically. Plan IDs are stable per recommendation, so the tags keep matching as new sessions arrive.
+
+## 7. Savings ledger
+
+**Mark applied** (or `POST /api/advisor/ledger`, or `--apply` in the CLI) records:
+
+- the recommendation and its expected savings
+- when the change took effect (`applied_at`)
+- an optional **scope**: session metadata filters such as `agent=pr-review`
+- a note
+- a **baseline snapshot** built from in-scope sessions that started before `applied_at`: the recommendation's measured waste, how often the finding appeared, input tokens, turns, failures, latency and success rate
+
+Each evaluation compares that baseline with in-scope sessions that started **after** `applied_at` (experiment-tagged sessions are excluded):
+
+| Status | Rule |
+|---|---|
+| `awaiting_data` | Fewer than 3 sessions after the change |
+| `realized` | Finding share at least halved and measured waste at least halved |
+| `partial` | Some waste or primary-metric improvement |
+| `no_effect` | No measurable change |
+| `regressed` | Success fell by more than 10 pp, or the primary metric rose by more than 10% |
+
+The ledger reports realized tokens saved per session, cumulative tokens saved, and the share of the expected saving. Entries live in an `advisor_ledger` table in the same SQLite file as sessions (or a JSON file for the CLI). The ledger is observational before/after evidence: workload mix, model or prompt changes can confound it, so pair important changes with a verification plan.
+
 ## Interfaces
 
-- **Python:** `from backend.advisor import analyze_sessions, AdvisorConfig`
-- **API:** `GET /api/sessions/{id}/advisor` (one session) and
-  `GET /api/advisor?session_id=a&session_id=b` (several; all captured sessions
-  when omitted).
-- **CLI** (run `python -m examples.advisor_demo` first to generate the synthetic sessions):
+- **Python:** `from backend.advisor import analyze_sessions, AdvisorConfig, JudgeOptions`, plus
+  `backend.advisor.verify` (`verification_plans`, `evaluate_plan`) and `backend.advisor.ledger`
+  (`make_entry`, `evaluate_ledger`, `SQLiteLedger`, `JSONLedger`).
+- **API:**
+  - `GET /api/advisor?session_id=…&judge=true&plans=3` (all captured sessions when no IDs) and
+    `GET /api/sessions/{id}/advisor?judge=true`. Reports include `verification_plans`, `ledger` and `judge`.
+  - `GET /api/advisor/judge`: is a judge configured?
+  - `GET /api/advisor/verification?top=3` and `POST /api/advisor/verification/evaluate` with `{"plan": …}`
+  - `GET /api/advisor/ledger`, `POST /api/advisor/ledger` with
+    `{"recommendation_id", "applied_at"?, "scope"?, "note"?, "plan_id"?}`, and `DELETE /api/advisor/ledger/{id}`
+- **CLI** (run `python -m examples.advisor_demo` first to generate the synthetic sessions and ledger):
 
 ```bash
 python -m backend.advisor examples/advisor/sessions/*.json \
-    --catalog examples/advisor/catalog.json --format html -o advisor-report.html
-python -m backend.advisor --db data/agent-tracer.sqlite3 --format md
+    --catalog examples/advisor/catalog.json --ledger examples/advisor/ledger.json --format html -o advisor-report.html
+python -m backend.advisor --db data/agent-tracer.sqlite3 --format md --plans 5
 python -m backend.advisor otel-export.json --otel --format json
+# Judge (on-prem vLLM example)
+AGENT_TRACER_JUDGE=openai AGENT_TRACER_JUDGE_URL=http://gpu-node:8000/v1 AGENT_TRACER_JUDGE_MODEL=qwen2.5-32b-instruct \
+    python -m backend.advisor sessions/*.json --judge --format md
+# Ledger and verification
+python -m backend.advisor sessions/*.json --ledger ledger.json --apply chatty_tool:bitbucket --scope agent=pr-review \
+    --note "Code mode for Bitbucket reads"
+python -m backend.advisor sessions/*.json --format json -o report.json   # plans are in report.verification_plans
+python -m backend.advisor sessions/*.json --evaluate-plan plan.json
 ```
 
 ## Limitations
@@ -207,9 +310,6 @@ python -m backend.advisor otel-export.json --otel --format json
 
 ## Roadmap
 
-1. An optional LLM judge for tool-selection quality and semantic result usage.
-2. A dashboard panel in the React UI, with a stacked budget chart, latency
-   waterfall, and tool scorecard.
-3. Recommendation verification: auto-generate paired-trial plans for the top
-   recommendations.
-4. A savings ledger that tracks applied recommendations against later sessions.
+1. Execute verification plans automatically through the replay harness, where tools can be recorded.
+2. Calibrate judge verdicts against a small human-labelled set, and report agreement.
+3. Push ledger realizations into the A/B harness and alert when a realized saving regresses.

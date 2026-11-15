@@ -87,6 +87,9 @@ class ToolCall:
     ownership: str
     kind: str
     llm_turn: int  # number of model calls completed before this tool call started
+    start_ts: float | None = None
+    used_ratio_source: str | None = None
+    judgement: dict | None = None
 
     @property
     def args_key(self) -> str:
@@ -108,6 +111,7 @@ class LLMCall:
     cached_tokens: int | None
     output: Any
     snapshot: dict | None = None
+    start_ts: float | None = None
 
 
 @dataclass
@@ -120,6 +124,8 @@ class SessionTrace:
     snapshots: list = field(default_factory=list)
     wall_ms: float | None = None
     metadata: dict = field(default_factory=dict)
+    started_at: float | None = None
+    goal: str | None = None
 
 
 def classify(name: str, catalog: dict, before: dict, after: dict) -> tuple[str, str, str, str]:
@@ -178,7 +184,9 @@ def build_trace(session_id: str, events: list, *, catalog: dict | None = None, s
                     duration_ms=dur, upstream_ms=_num(p.get('upstream_ms')),
                     result_tokens=int(reported) if reported is not None else estimate_tokens(result),
                     result_tokens_reported=reported is not None, used_ratio=_num(p.get('used_ratio')),
-                    transport=transport, server=server, ownership=ownership, kind=tkind, llm_turn=turn))
+                    transport=transport, server=server, ownership=ownership, kind=tkind, llm_turn=turn,
+                    start_ts=before.get('ts') if isinstance(before.get('ts'), (int, float)) else None,
+                    used_ratio_source='reported' if _num(p.get('used_ratio')) is not None else None))
             else:
                 usage = read_usage(p)
                 snapshot = snapshots_by_call.get(cid) or snap
@@ -186,11 +194,20 @@ def build_trace(session_id: str, events: list, *, catalog: dict | None = None, s
                     session_id=session_id, name=name, seq=before.get('seq', 0), duration_ms=dur,
                     input_tokens=usage['input'], output_tokens=usage['output'], cached_tokens=usage['cached'],
                     output=p.get('output', p.get('response', p.get('decision', p.get('text')))),
-                    snapshot=snapshot))
+                    snapshot=snapshot, start_ts=before.get('ts') if isinstance(before.get('ts'), (int, float)) else None))
                 llm_done += 1
     stamps = [e['ts'] for e in events if isinstance(e.get('ts'), (int, float))]
     if len(stamps) >= 2:
         trace.wall_ms = (max(stamps) - min(stamps)) * 1000
+    trace.started_at = min(stamps) if stamps else None
+    for e in events:
+        if e.get('kind') == 'agent.start':
+            p = e.get('payload') or {}
+            goal = p.get('goal')
+            trace.goal = (goal.get('text') if isinstance(goal, dict) else goal) or p.get('task')
+            break
+    if not trace.goal:
+        trace.goal = (metadata or {}).get('task')
     return trace
 
 

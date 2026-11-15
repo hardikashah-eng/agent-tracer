@@ -128,5 +128,19 @@ def decompose(trace: SessionTrace, catalog: dict | None = None) -> dict:
         'tool_results_by_tool': {k: round(v) for k, v in sorted(tool_result_totals.items(), key=lambda x: -x[1])},
         'tool_definitions_by_server': {k: round(v) for k, v in sorted(def_totals.items(), key=lambda x: -x[1])},
     }
-    return {'session_id': trace.id, 'status': trace.status, 'llm_turns': len(trace.llm_calls),
-            'tool_calls': len(trace.tool_calls), 'latency': latency, 'token_budget': budget}
+    origin = trace.started_at
+    timeline = []
+    for c in trace.llm_calls:
+        timeline.append({'kind': 'llm', 'name': c.name, 'seq': c.seq,
+                         'start_ms': round((c.start_ts - origin) * 1000, 1) if origin is not None and c.start_ts is not None else None,
+                         'duration_ms': c.duration_ms, 'upstream_ms': None, 'ok': True, 'transport': 'model',
+                         'input_tokens': c.input_tokens})
+    for c in trace.tool_calls:
+        timeline.append({'kind': 'tool', 'name': c.name, 'seq': c.seq,
+                         'start_ms': round((c.start_ts - origin) * 1000, 1) if origin is not None and c.start_ts is not None else None,
+                         'duration_ms': c.duration_ms, 'upstream_ms': c.upstream_ms, 'ok': c.ok, 'transport': c.transport,
+                         'server': c.server, 'result_tokens': c.result_tokens})
+    timeline.sort(key=lambda x: (x['start_ms'] if x['start_ms'] is not None else float('inf'), x['seq']))
+    return {'session_id': trace.id, 'status': trace.status, 'started_at': trace.started_at, 'goal': trace.goal,
+            'metadata': trace.metadata, 'llm_turns': len(trace.llm_calls),
+            'tool_calls': len(trace.tool_calls), 'latency': latency, 'token_budget': budget, 'timeline': timeline}

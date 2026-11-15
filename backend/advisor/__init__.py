@@ -9,10 +9,14 @@ from collections import defaultdict
 
 from .decompose import CATEGORIES, decompose
 from .detectors import AdvisorConfig, detect_cross_session, detect_session
+from .judge import JudgeOptions, run_judge, summarize_run, tool_selection_findings
+from .ledger import evaluate_ledger
+from .metrics import session_metrics
 from .model import build_trace, load_sessions
 from .recommend import recommend
+from .verify import verification_plans
 
-__all__ = ['AdvisorConfig', 'analyze_sessions', 'load_sessions']
+__all__ = ['AdvisorConfig', 'JudgeOptions', 'analyze_sessions', 'load_sessions']
 
 
 def _tool_scorecard(traces, findings, catalog, n):
@@ -63,18 +67,27 @@ def _tool_scorecard(traces, findings, catalog, n):
     return out
 
 
-def analyze_sessions(sessions: list[dict], catalog: dict | None = None, config: AdvisorConfig | None = None) -> dict:
-    """sessions: [{'id', 'events', 'status'?, 'metadata'?}] in the tracer event schema."""
+def analyze_sessions(sessions: list[dict], catalog: dict | None = None, config: AdvisorConfig | None = None, *,
+                     judge=None, judge_options: JudgeOptions | None = None, judge_cache: dict | None = None,
+                     plans: int = 3, ledger: list | None = None) -> dict:
+    """sessions: [{'id', 'events', 'status'?, 'metadata'?}] in the tracer event schema.
+
+    judge: optional LLM judge (see backend.advisor.judge). When given, sampled tool calls are judged for
+    tool-selection quality and large results for semantic usage; judged usage replaces lexical estimates.
+    """
     catalog = catalog or {}
     config = config or AdvisorConfig()
     traces = [build_trace(str(s.get('id', i)), s.get('events', []), catalog=catalog,
                           status=s.get('status', 'unknown'), metadata=s.get('metadata'))
               for i, s in enumerate(sessions)]
+    judge_run = run_judge(judge, traces, catalog, judge_options, judge_cache) if judge else None
     decompositions = [decompose(t, catalog) for t in traces]
     findings = []
     for t, d in zip(traces, decompositions):
         findings.extend(detect_session(t, d, config))
     findings.extend(detect_cross_session(traces, decompositions, catalog, config))
+    if judge_run:
+        findings.extend(tool_selection_findings(judge_run, (judge_options or JudgeOptions()).min_confidence))
     ownership = {c.name: c.ownership for t in traces for c in t.tool_calls}
     n = max(1, len(traces))
     recs = recommend(findings, len(traces), catalog, ownership)
@@ -119,8 +132,9 @@ def analyze_sessions(sessions: list[dict], catalog: dict | None = None, config: 
                      'avg_model_turns_per_tool_call': round(sum(d['llm_turns'] for d in decompositions) / tool_calls, 2) if tool_calls else None},
         'avg_turns_per_session': round(statistics.mean([d['llm_turns'] for d in decompositions]), 2) if decompositions else 0,
     }
-    return {
+    report = {
         'engine': 'harness-advisor-v1', 'summary': summary, 'recommendations': recs, 'findings': findings,
+        'judge': summarize_run(judge_run) if judge_run else None,
         'tools': _tool_scorecard(traces, findings, catalog, n), 'sessions': decompositions,
         'limitations': [
             'Findings are heuristics from captured events, not confirmed root causes; confidence is not a calibrated probability.',
@@ -129,3 +143,7 @@ def analyze_sessions(sessions: list[dict], catalog: dict | None = None, config: 
             'Savings are estimates; validate top recommendations with paired trials before adopting them.',
             'Missing instrumentation hides problems; an empty report does not certify an efficient harness.'],
     }
+    report['session_metrics'] = session_metrics(traces, decompositions, findings, recs)
+    report['verification_plans'] = verification_plans(report, plans) if plans else []
+    report['ledger'] = evaluate_ledger(ledger, report) if ledger else None
+    return report

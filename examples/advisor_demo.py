@@ -14,6 +14,7 @@ import random
 from pathlib import Path
 
 from backend.advisor import analyze_sessions
+from backend.advisor.ledger import make_entry
 from backend.advisor.report import to_html, to_markdown
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,9 +38,12 @@ CATALOG = {'tools': {
 SYSTEM = 'You are a PR review agent. Review open pull requests, link Jira issues, and summarise risks.'
 
 
+BASE_TS = 1_790_000_000.0  # synthetic timeline; each session starts one hour after the previous one
+
+
 class Session:
-    def __init__(self, sid, rng):
-        self.id, self.rng, self.events, self.seq, self.ts = sid, rng, [], 0, 1_700_000_000.0
+    def __init__(self, sid, rng, start_ts=BASE_TS):
+        self.id, self.rng, self.events, self.seq, self.ts = sid, rng, [], 0, start_ts
         self.messages = [{'id': 'system-0', 'role': 'system', 'category': 'system', 'content': SYSTEM},
                          {'id': 'user-0', 'role': 'user', 'category': 'conversation', 'content': 'Review open PRs in repo adas-sim and flag stale ones.'}]
         self.prefix = 'tools-v1'
@@ -98,28 +102,43 @@ def diff(i):
             'patch': '\n'.join(f'+  threshold_{k} = compute_margin(state, {k}); // tuned for scenario {i}' for k in range(160))}
 
 
-def make_session(n, rng):
-    s = Session(f'pr-review-{n:02d}', rng)
-    if n == 3:
-        s.prefix = 'tools-v1'
+def code_mode_review(s, pages, ids):
+    """Variant arm: the model writes one script against typed Bitbucket stubs; only the aggregate returns."""
+    script = ('const prs = await bitbucket.listAllPullRequests({repo: "adas-sim", state: "OPEN"});\n'
+              'return Promise.all(prs.slice(0, 4).map(async p => summarise(p, await bitbucket.getDiffstat(p.id), '
+              'await bitbucket.getActivity(p.id))));')
+    summary = [{'id': pid, 'files': 6, 'approvals': 1, 'age_days': 9 + pid % 5, 'risk': 'planner/lateral thresholds'} for pid in ids[:4]]
+    s.tool('execute_code', {'language': 'typescript', 'code': script}, {'pages': pages, 'open_prs': len(ids), 'reviewed': summary},
+           upstream_ms=rng_upstream(s), overhead_ms=60)
+    s.events[-2]['payload'].update({'transport': 'code', 'server': 'bitbucket'})
+    s.llm('Reviewed 4 PRs via one code-mode script; 2 stale.')
+
+
+def rng_upstream(s):
+    return s.rng.uniform(2500, 4000)
+
+
+def make_session(n, rng, *, mode='baseline', start_ts=None, metadata=None, sid=None):
+    s = Session(sid or f'pr-review-{n:02d}', rng, start_ts or BASE_TS + n * 3600)
     s.llm('Plan: list open PRs, inspect each, link Jira, summarise.')
     pages = 3 + n % 2
-    ids = []
-    for page in range(1, pages + 1):
+    ids = [page * 10 + k for page in range(1, pages + 1) for k in range(5)]
+    if mode == 'codemode':
+        code_mode_review(s, pages, ids)
+    for page in range(1, pages + 1) if mode != 'codemode' else []:
         values = [pr(page * 10 + k) for k in range(5)]
-        ids += [v['id'] for v in values]
         s.tool('list_pull_requests', {'workspace': 'xp', 'repo': 'adas-sim', 'state': 'OPEN', 'page': page},
                {'values': values, 'next': page < pages})
         if n == 3:
             s.prefix = f'tools-v{page + 1}'  # tool list re-ordered by a dynamic loader
         s.llm(f'Fetched page {page}; continue paginating.' if page < pages else 'All pages fetched; inspect PRs.')
-    for pid in ids[:4]:
+    for pid in ids[:4] if mode != 'codemode' else []:
         s.tool('get_pull_request_diff', {'repo': 'adas-sim', 'id': pid}, diff(pid), upstream_ms=rng.uniform(300, 700))
         s.tool('get_pull_request_activity', {'repo': 'adas-sim', 'id': pid},
                {'values': [{'approval': None, 'comment': {'content': {'raw': 'LGTM pending sim run'}}} for _ in range(3)]})
         s.llm(f'PR {pid}: touches planner/lateral; risk moderate. Next PR.')
     # Jira lookup retry loop: missing cloudId (third-party server returns a vague error).
-    attempts = 3 if n % 3 != 1 else 1
+    attempts = 3 if n % 3 != 1 and mode != 'retry_guard' else 1
     for _ in range(attempts):
         s.tool('get_issue', {'issueKey': 'ADAS-1432'}, None, ok=False, error='Bad request: invalid input')
         s.llm('Jira lookup failed; retrying.')
@@ -134,24 +153,49 @@ def make_session(n, rng):
     s.tool('run_tests', {'command': 'bazel test //planner:lateral_test'}, {'passed': 41, 'failed': 0}, upstream_ms=rng.uniform(4000, 9000))
     s.llm('Summary: 2 stale PRs (no approvals > 7 days), ADAS-1432 linked, tests green.', cached_share=0.1)
     s.emit('agent.completed', 'pr-review-agent', {'answer': 'done'}, dt=0.1)
-    return {'id': s.id, 'status': 'completed', 'events': s.events, 'metadata': {'agent': 'pr-review', 'synthetic': 'true'}}
+    meta = {'agent': 'pr-review', 'synthetic': 'true', **(metadata or {})}
+    return {'id': s.id, 'status': 'completed', 'events': s.events, 'metadata': meta}
 
 
 def main():
     rng = random.Random(7)
+    # 1) Six baseline sessions.
     sessions = [make_session(n, rng) for n in range(1, 7)]
+    report = analyze_sessions(sessions, CATALOG)
+    # 2) The team applies the retry guard for get_issue after session 6 and records it in the savings ledger.
+    applied_at = BASE_TS + 6.5 * 3600
+    entry = make_entry(report, 'failure_loop:get_issue', applied_at=applied_at, scope={'agent': 'pr-review'},
+                       note='Retry guard: block identical failing calls; surface error with required cloudId.')
+    entry['id'] = 'demo-ledger-1'
+    # 3) Four later production sessions run with the retry guard.
+    sessions += [make_session(n, rng, mode='retry_guard') for n in range(7, 11)]
+    # 4) A paired trial verifies the top recommendation (code mode for Bitbucket) on five tasks.
+    plan = next(p for p in report['verification_plans'] if p['recommendation_id'] == 'chatty_tool:bitbucket')
+    for k, task in enumerate(plan['design']['tasks'][:5]):
+        for arm, mode in (('baseline', 'retry_guard'), ('variant', 'codemode')):
+            meta = {'experiment_id': plan['experiment_id'], 'arm': arm, 'task_id': task,
+                    'recommendation_id': plan['recommendation_id']}
+            sessions.append(make_session(20 + k, rng, mode=mode, start_ts=BASE_TS + (12 + k) * 3600 + (0 if arm == 'baseline' else 1800),
+                                         metadata=meta, sid=f'trial-{k + 1}-{arm}'))
     (OUT / 'sessions').mkdir(parents=True, exist_ok=True)
+    for old in (OUT / 'sessions').glob('*.json'):
+        old.unlink()
     for s in sessions:
         (OUT / 'sessions' / f"{s['id']}.json").write_text(json.dumps(s, indent=1), encoding='utf-8')
     (OUT / 'catalog.json').write_text(json.dumps(CATALOG, indent=2), encoding='utf-8')
-    report = analyze_sessions(sessions, CATALOG)
+    (OUT / 'ledger.json').write_text(json.dumps([entry], indent=2), encoding='utf-8')
+    final = analyze_sessions(sessions, CATALOG, ledger=[entry])
     samples = ROOT / 'docs' / 'samples'
     samples.mkdir(parents=True, exist_ok=True)
-    (samples / 'advisor-report.html').write_text(to_html(report, 'Harness Advisor — synthetic PR-review agent'), encoding='utf-8')
-    (samples / 'advisor-report.md').write_text(to_markdown(report), encoding='utf-8')
-    print(f"{len(sessions)} sessions, {len(report['recommendations'])} recommendations")
-    for r in report['recommendations']:
+    (samples / 'advisor-report.html').write_text(to_html(final, 'Harness Advisor — synthetic PR-review agent'), encoding='utf-8')
+    (samples / 'advisor-report.md').write_text(to_markdown(final), encoding='utf-8')
+    print(f"{len(sessions)} sessions, {len(final['recommendations'])} recommendations")
+    for r in final['recommendations']:
         print(f"{r['rank']:>2}. [{r['severity']}] {r['title']} ({r['ownership']}) ~{r['estimated_savings_per_session']['tokens']} tok/session")
+    for p in final['verification_plans']:
+        print('plan', p['experiment_id'], (p.get('result') or {}).get('verdict', 'not run'))
+    for e in final['ledger']['entries']:
+        print('ledger', e['recommendation_id'], e['status'], e['realized'])
 
 
 if __name__ == '__main__':

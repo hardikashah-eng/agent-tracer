@@ -19,6 +19,9 @@ from .replay import export_fixture, evaluate, intervention
 from .infrastructure import correlate, experiment_plan
 from .trials import summarize
 from .advisor import analyze_sessions
+from .advisor.judge import judge_from_env, judge_status
+from .advisor.ledger import SQLiteLedger, evaluate_ledger, make_entry
+from .advisor.verify import evaluate_plan
 from fastapi import Query
 from fastapi.responses import JSONResponse
 import json
@@ -34,7 +37,7 @@ def load_catalog():
     except (OSError, ValueError) as exc:
         raise HTTPException(500, f'Could not read AGENT_TRACER_TOOL_CATALOG: {exc}') from exc
 
-app = FastAPI(title='Agent Tracer', version='1.0.0')
+app = FastAPI(title='Agent Tracer', version='1.1.0')
 app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:5173', 'http://127.0.0.1:5173'], allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
 
 class SessionMetadata(BaseModel):
@@ -123,17 +126,81 @@ def efficiency(sid: str):
 def _advisor_body(s):
     return {'id': s.id, 'status': s.status, 'events': copy.deepcopy(s.events), 'metadata': s.metadata}
 
+ledger_store = SQLiteLedger(os.environ.get('AGENT_TRACER_DB', 'data/agent-tracer.sqlite3'))
+judge_cache: dict = {}
+
+def _chosen_sessions(session_id):
+    if session_id:
+        return [get_session(sid) for sid in session_id]
+    return [s for s in tracer.sessions.values() if not (s.metadata or {}).get('analysis')]
+
+def _run_advisor(chosen, use_judge=False, plans=3):
+    judge = None
+    if use_judge:
+        try:
+            judge = judge_from_env()
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if judge is None:
+            raise HTTPException(400, 'LLM judge not configured; set AGENT_TRACER_JUDGE and related variables')
+    return analyze_sessions([_advisor_body(s) for s in chosen], load_catalog(), judge=judge, judge_cache=judge_cache,
+                            plans=plans, ledger=ledger_store.list())
+
 @app.get('/api/sessions/{sid}/advisor')
-def session_advisor(sid: str):
-    return analyze_sessions([_advisor_body(get_session(sid))], load_catalog())
+def session_advisor(sid: str, judge: bool = False):
+    return _run_advisor([get_session(sid)], judge)
 
 @app.get('/api/advisor')
-def advisor(session_id: list[str] | None = Query(default=None)):
-    if session_id:
-        chosen = [get_session(sid) for sid in session_id]
-    else:
-        chosen = [s for s in tracer.sessions.values() if not (s.metadata or {}).get('analysis')]
-    return analyze_sessions([_advisor_body(s) for s in chosen], load_catalog())
+def advisor(session_id: list[str] | None = Query(default=None), judge: bool = False, plans: int = Query(default=3, ge=0, le=20)):
+    return _run_advisor(_chosen_sessions(session_id), judge, plans)
+
+@app.get('/api/advisor/judge')
+def advisor_judge_status():
+    return judge_status()
+
+@app.get('/api/advisor/verification')
+def advisor_verification(session_id: list[str] | None = Query(default=None), top: int = Query(default=3, ge=1, le=20)):
+    return _run_advisor(_chosen_sessions(session_id), plans=top)['verification_plans']
+
+class PlanEvaluation(BaseModel):
+    plan: dict
+
+@app.post('/api/advisor/verification/evaluate')
+def advisor_evaluate(req: PlanEvaluation):
+    plan = req.plan
+    if not isinstance(plan.get('experiment_id'), str) or not isinstance(plan.get('primary_metric'), dict) \
+            or not isinstance(plan.get('design'), dict):
+        raise HTTPException(422, 'Supply a plan produced by /api/advisor/verification')
+    report = analyze_sessions([_advisor_body(s) for s in _chosen_sessions(None)], load_catalog(), plans=0)
+    return evaluate_plan(plan, report['session_metrics'])
+
+class LedgerRequest(BaseModel):
+    recommendation_id: str
+    applied_at: float | None = None
+    scope: dict[str, str] = Field(default_factory=dict)
+    note: str = Field(default='', max_length=2000)
+    plan_id: str | None = None
+
+@app.get('/api/advisor/ledger')
+def advisor_ledger():
+    report = analyze_sessions([_advisor_body(s) for s in _chosen_sessions(None)], load_catalog(), plans=0)
+    return evaluate_ledger(ledger_store.list(), report)
+
+@app.post('/api/advisor/ledger')
+def advisor_ledger_add(req: LedgerRequest):
+    report = analyze_sessions([_advisor_body(s) for s in _chosen_sessions(None)], load_catalog(), plans=0)
+    try:
+        entry = make_entry(report, req.recommendation_id, applied_at=req.applied_at, scope=req.scope,
+                           note=req.note, plan_id=req.plan_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return ledger_store.add(entry)
+
+@app.delete('/api/advisor/ledger/{entry_id}')
+def advisor_ledger_delete(entry_id: str):
+    if not ledger_store.delete(entry_id):
+        raise HTTPException(404, 'Ledger entry not found')
+    return {'deleted': entry_id}
 
 
 @app.get('/api/sessions/{sid}/provenance')

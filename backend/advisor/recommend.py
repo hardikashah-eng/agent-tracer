@@ -92,6 +92,16 @@ LEVERS: dict[str, dict] = {
     },
 }
 
+LEVERS['tool_selection'] = {
+    'title': 'Improve tool choice for {tool}',
+    'why': 'An LLM judge rated a large share of sampled calls to this tool as a poor choice for the goal.',
+    'harness_owner': ['Add routing hints to the system prompt or a skill: when to use {tool} versus the suggested alternative.',
+                      'Hide overlapping tools from this agent so the right one is unambiguous.'],
+    'server_owner': ['Rename or rewrite the {tool} description so its purpose and limits are explicit; add usage examples.'],
+    'gateway_operator': ['Expose a curated virtual server without the overlapping tool for this agent.'],
+    'vendor_request': ['Ask the vendor to clarify the tool description and when to prefer alternatives.'],
+}
+
 SEVERITY_WEIGHT = {'high': 3, 'medium': 2, 'low': 1}
 
 
@@ -134,6 +144,9 @@ def recommend(findings: list[dict], session_count: int, catalog: dict, ownership
         severity = max((f['severity'] for f in group), key=lambda s: SEVERITY_WEIGHT[s])
         score = (per_session['tokens'] / 1000 + per_session['ms'] / 1000 + per_session['turns'] * 0.5) \
             * (0.5 + 0.5 * affected / n) * SEVERITY_WEIGHT[severity]
+        if detector == 'tool_selection':
+            # No direct savings estimate: rank by how often the judge flagged the tool.
+            score = SEVERITY_WEIGHT[severity] * group[0]['metrics']['flagged'] / n
         spec = LEVERS[detector]
         levers = _levers(detector, tool, ownership if ownership != 'harness' else 'first_party')
         if ownership == 'harness':
@@ -152,8 +165,10 @@ def recommend(findings: list[dict], session_count: int, catalog: dict, ownership
             'estimated_savings_per_session': {'tokens': int(per_session['tokens']), 'ms': round(per_session['ms'], 1),
                                               'turns': round(per_session['turns'], 2)},
             'levers': levers, 'note': note,
-            'evidence': [{'session_id': f.get('session_id'), 'seqs': f['seqs'][:12], 'detail': f['detail']} for f in group[:5]],
-            'confidence': 'heuristic',
+            'evidence': ([{'session_id': x['session_id'], 'seqs': [x['seq']], 'detail': x['reason']} for x in group[0]['evidence_items']]
+                         if group[0].get('evidence_items') else
+                         [{'session_id': f.get('session_id'), 'seqs': f['seqs'][:12], 'detail': f['detail']} for f in group[:5]]),
+            'confidence': group[0].get('confidence', 'heuristic'),
         })
     recs.sort(key=lambda r: -r['priority_score'])
     for i, r in enumerate(recs, 1):

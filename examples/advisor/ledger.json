@@ -1,0 +1,34 @@
+[
+  {
+    "id": "demo-ledger-1",
+    "recommendation_id": "failure_loop:get_issue",
+    "title": "Stop retry loops on get_issue",
+    "detector": "failure_loop",
+    "tool": "get_issue",
+    "ownership": "third_party",
+    "applied_at": 1790023400.0,
+    "recorded_at": 1794780186.2736542,
+    "note": "Retry guard: block identical failing calls; surface error with required cloudId.",
+    "scope": {
+      "agent": "pr-review"
+    },
+    "plan_id": null,
+    "expected_savings_per_session": {
+      "tokens": 24544,
+      "ms": 5217.2,
+      "turns": 1.33
+    },
+    "baseline": {
+      "sessions": 6,
+      "waste_tokens_mean": 24544.7,
+      "finding_share": 0.667,
+      "input_tokens_mean": 249611.3,
+      "model_turns_mean": 13.67,
+      "tool_failures_mean": 2.33,
+      "wall_ms_mean": 61813.3,
+      "primary_metric": "tool_failures",
+      "primary_mean": 2.3,
+      "success_rate": 1.0
+    }
+  }
+]

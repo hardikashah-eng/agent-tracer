@@ -78,6 +78,7 @@ def to_markdown(report: dict) -> str:
             where = f"session `{ev['session_id']}` seqs {ev['seqs']}" if ev['session_id'] else 'cross-session'
             lines.append(f"- {where}: {ev['detail']}")
         lines += ['', '</details>', '']
+    lines += _md_extras(report)
     lines += ['## Tool scorecard', '', '| Tool | Server | Transport | Ownership | Calls | Sessions | Errors | Dupes | Avg result tok | Avg ms | Def tok | Flags |',
               '|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|']
     for t in report['tools']:
@@ -86,6 +87,97 @@ def to_markdown(report: dict) -> str:
                      f"{_fmt(t['avg_duration_ms'])} | {_fmt(t['definition_tokens'])} | {', '.join(t['flags'])} |")
     lines += ['', '## Limitations', ''] + [f'- {x}' for x in report['limitations']]
     return '\n'.join(lines) + '\n'
+
+
+STATUS_LABEL = {'realized': 'Realized', 'partial': 'Partial', 'no_effect': 'No effect', 'regressed': 'Regressed',
+                'awaiting_data': 'Awaiting data'}
+
+
+def _md_extras(report: dict) -> list[str]:
+    lines = []
+    j = report.get('judge')
+    if j:
+        lines += ['## LLM judge', '', f"Backend {j['backend']} · model `{j['model']}` · {j['judge_calls']} calls "
+                  f"({j['cache_hits']} cached) · {j['tool_selection_flagged']}/{j['tool_selection_judged']} tool choices flagged · "
+                  f"{j['result_usage_judged']} results judged for usage · {len(j['errors'])} errors", '', f"> {j['disclaimer']}", '']
+        for v in [x for x in j['tool_selection'] if not x['appropriate']][:8]:
+            lines.append(f"- `{v['tool']}` in `{v['session_id']}` #{v['seq']}: {v['reason']}"
+                         + (f" (better: `{v['better_tool']}`)" if v['better_tool'] else ''))
+        for u in j['result_usage'][:8]:
+            lines.append(f"- `{u['tool']}` result used ~{u['used_ratio']:.0%} (confidence {u['confidence']:.1f})"
+                         + (f"; unused: {', '.join(u['unused_fields'][:5])}" if u['unused_fields'] else ''))
+        lines.append('')
+    plans = report.get('verification_plans') or []
+    if plans:
+        lines += ['## Verification plans (top recommendations)', '']
+        for p in plans:
+            pm = p['primary_metric']
+            lines += [f"### {p['title']}", '', f"- **Experiment:** `{p['experiment_id']}`", f"- **Hypothesis:** {p['hypothesis']}",
+                      f"- **Change (variant arm):** {p['intervention']['change']}",
+                      f"- **Primary metric:** {pm['name']} (baseline mean {_fmt(pm['baseline_mean'])}, SD {_fmt(pm['baseline_sd'])}, "
+                      f"expected −{_fmt(pm['expected_delta_per_task'])} per task)",
+                      f"- **Design:** {p['design']['pairs_required']} task pairs, {p['design']['type']}; sizing: {p['design']['sizing_basis']}",
+                      f"- **Guardrails:** " + '; '.join(f"{g['metric']}: {g['rule']}" for g in p['guardrails']),
+                      f"- **Tag sessions with:** `{json.dumps(p['tagging'])}`",
+                      f"- **Tasks to start with:** {', '.join(p['design']['tasks'][:8])}"]
+            res = p.get('result')
+            if res:
+                detail = (f"mean change {_fmt(res['mean_delta'])} (95% CI {_fmt(res['ci95'][0])} to {_fmt(res['ci95'][1])}, "
+                          f"{res['relative_change']:+.0%}) over {res['pairs_observed']} pairs" if 'mean_delta' in res
+                          else f"{res['pairs_observed']} pairs")
+                lines.append(f"- **Result: {res['verdict'].upper()}** — {detail}. {res['explanation']}")
+            lines.append('')
+    led = report.get('ledger')
+    if led:
+        lines += ['## Savings ledger', '', f"Cumulative tokens saved: **{_fmt(led['cumulative_tokens_saved'])}** · "
+                  f"per session: **{_fmt(led['tokens_saved_per_session'])}** · "
+                  + ', '.join(f"{STATUS_LABEL.get(k, k)} {v}" for k, v in led['status_counts'].items()), '',
+                  '| Applied | Recommendation | Status | Expected tok/session | Realized tok/session | Sessions before → after |',
+                  '|---|---|---|---:|---:|---|']
+        import datetime
+        for e in led['entries']:
+            when = datetime.datetime.fromtimestamp(e['applied_at'], datetime.timezone.utc).strftime('%Y-%m-%d')
+            realized = (e['realized'] or {}).get('waste_tokens_saved_per_session')
+            lines.append(f"| {when} | {e['title']} | {STATUS_LABEL.get(e['status'], e['status'])} | "
+                         f"{_fmt(e['expected_savings_per_session']['tokens'])} | {_fmt(realized)} | "
+                         f"{e['baseline']['sessions']} → {e['after']['sessions']} |")
+        lines += ['', f"> {led['warning']}", '']
+    return lines
+
+
+def _html_extras(report: dict) -> str:
+    md = _md_extras(report)
+    if not md:
+        return ''
+    out, in_table, header_done = [], False, False
+    for line in md:
+        if in_table and not line.startswith('|'):
+            out.append('</table></div>')
+            in_table = False
+        if line.startswith('|'):
+            cells = [c.strip() for c in line.strip('|').split('|')]
+            if set(''.join(cells)) <= set('-: '):
+                continue
+            if not in_table:
+                out.append('<div class="panel" style="overflow-x:auto"><table>')
+                in_table, header_done = True, False
+            tag = 'td' if header_done else 'th'
+            header_done = True
+            out.append('<tr>' + ''.join(f'<{tag}>{html.escape(c)}</{tag}>' for c in cells) + '</tr>')
+        elif line.startswith('## '):
+            out.append(f'<h2>{html.escape(line[3:])}</h2>')
+        elif line.startswith('### '):
+            out.append(f'<h3 style="margin-top:14px">{html.escape(line[4:])}</h3>')
+        elif line.startswith('- '):
+            text = html.escape(line[2:]).replace('**', '').replace('`', '')
+            out.append(f'<div class="small" style="margin:3px 0">• {text}</div>')
+        elif line.startswith('> '):
+            out.append(f'<p class="note">{html.escape(line[2:])}</p>')
+        elif line:
+            out.append(f'<p>{html.escape(line).replace("**", "").replace("`", "")}</p>')
+    if in_table:
+        out.append('</table></div>')
+    return ''.join(out)
 
 
 def _bar(parts: list[tuple[str, float]], height=26) -> str:
@@ -200,6 +292,7 @@ details{{font-size:13px;margin-top:6px}} table{{width:100%;border-collapse:colla
 <div class="grid2"><div><h2>Tool definitions by server</h2><div class="panel">{_hbars(s['tool_definitions_by_server'])}</div></div>
 <div><h2>Tool results by tool</h2><div class="panel">{_hbars(s['tool_results_by_tool'])}</div></div></div>
 <h2>Recommendations</h2>{rec_html}
+{_html_extras(report)}
 <h2>Tool scorecard</h2><div class="panel" style="overflow-x:auto"><table><thead><tr><th>Tool</th><th>Server</th><th>Transport</th><th>Ownership</th><th>Calls</th><th>Sessions</th><th>Errors</th><th>Dupes</th><th>Avg result tok</th><th>Avg ms</th><th>Avg overhead ms</th><th>Def tok</th><th>Flags</th></tr></thead><tbody>{rows}</tbody></table></div>
 <h2>Per-turn input composition</h2><div class="panel">{turns or '<p class="muted">No model turns captured.</p>'}<div class="legend">{''.join(f'<span class="lg"><i style="background:{COLORS[i]}"></i>{v}</span>' for i, v in enumerate(CAT_LABEL.values()))}</div></div>
 <h2>Limitations</h2><ul class="muted">{limits}</ul>
